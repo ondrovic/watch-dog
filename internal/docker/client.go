@@ -17,10 +17,14 @@ type Client struct {
 
 // ContainerInfo holds minimal container data for discovery.
 type ContainerInfo struct {
-	ID     string
-	Name   string
+	// ID is the container ID.
+	ID string
+	// Name is the container name (without leading slash).
+	Name string
+	// Labels holds container labels (e.g. com.docker.compose.service).
 	Labels map[string]string
-	State  string // "running", "exited", etc.; only set when ListContainers is called with all=true
+	// State is "running", "exited", etc.; only set when ListContainers is called with all=true.
+	State string
 }
 
 // NewClient creates a Docker client using DOCKER_HOST (default unix socket).

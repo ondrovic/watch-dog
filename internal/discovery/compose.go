@@ -1,3 +1,5 @@
+// Package discovery provides compose path resolution from environment variables
+// and builds the parent-to-dependents map from root-level depends_on.
 package discovery
 
 import (
@@ -12,18 +14,22 @@ import (
 // ComposeFile represents the minimal structure needed to read root-level depends_on.
 // Only "services" and each service's "depends_on" are used.
 type ComposeFile struct {
+	// Services maps service name to service definition.
 	Services map[string]ComposeService `yaml:"services"`
 }
 
 // ComposeService holds a single service's depends_on (and optional fields we ignore).
 type ComposeService struct {
-	DependsOn interface{} `yaml:"depends_on"` // short: []string, long: map[string]DependsOnEntry
+	// DependsOn is short form ([]string) or long form (map[string]DependsOnEntry).
+	DependsOn interface{} `yaml:"depends_on"`
 }
 
 // DependsOnEntry is the long-form value (condition, restart, etc.).
 type DependsOnEntry struct {
+	// Condition is the dependency condition (e.g. service_started).
 	Condition string `yaml:"condition"`
-	Restart   *bool  `yaml:"restart"`
+	// Restart is optional; when set, controls restart behavior.
+	Restart *bool `yaml:"restart"`
 }
 
 // ParseComposeFile reads and parses a compose YAML file into ComposeFile.

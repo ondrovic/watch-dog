@@ -38,24 +38,44 @@ func init() {
 	recoveryCooldown = d
 }
 
-// recoveryCooldownState tracks last recovery time per parent to avoid re-running recovery
-// for the same parent on duplicate events (stop + die) or events from our own restarts.
+// recoveryCooldownState tracks last recovery time and in-flight recovery per parent
+// to avoid re-running recovery on duplicate events (stop + die) or overlapping runs.
 type recoveryCooldownState struct {
-	mu   sync.Mutex
-	last map[string]time.Time
+	mu       sync.Mutex
+	last     map[string]time.Time
+	inFlight map[string]bool
 }
 
-func (s *recoveryCooldownState) allow(parentName string) bool {
+// StartRecovery checks cooldown and in-flight for parentName. If allowed, marks the parent
+// in-flight and updates last recovery time, then returns true. Caller must call EndRecovery
+// when recovery finishes (e.g. defer after StartRecovery returns true).
+func (s *recoveryCooldownState) StartRecovery(parentName string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.last == nil {
 		s.last = make(map[string]time.Time)
 	}
+	if s.inFlight == nil {
+		s.inFlight = make(map[string]bool)
+	}
+	if s.inFlight[parentName] {
+		return false
+	}
 	if t, ok := s.last[parentName]; ok && time.Since(t) < recoveryCooldown {
 		return false
 	}
+	s.inFlight[parentName] = true
 	s.last[parentName] = time.Now()
 	return true
+}
+
+// EndRecovery clears the in-flight mark for parentName. Call when recovery for that parent finishes.
+func (s *recoveryCooldownState) EndRecovery(parentName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inFlight != nil {
+		delete(s.inFlight, parentName)
+	}
 }
 
 // main initializes logging from env, creates the Docker client, builds parent-to-dependents
@@ -119,14 +139,28 @@ func main() {
 			if !parentToDeps.IsParent(ev.ContainerName) {
 				continue
 			}
-			if !cooldown.allow(ev.ContainerName) {
-				docker.LogDebug("skipping recovery, in cooldown", "parent", ev.ContainerName)
-				continue
-			}
-			docker.LogInfo("parent needs recovery", "parent", ev.ContainerName, "id", ev.ContainerID, "reason", ev.Status)
-			flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName, &parentToDeps, selfName)
+			func() {
+				if !cooldown.StartRecovery(ev.ContainerName) {
+					docker.LogDebug("skipping recovery, in cooldown or already in flight", "parent", ev.ContainerName, "id", ev.ContainerID)
+					return
+				}
+				defer cooldown.EndRecovery(ev.ContainerName)
+				docker.LogInfo("parent needs recovery", "parent", ev.ContainerName, "id", ev.ContainerID, "reason", ev.Status)
+				flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName, &parentToDeps, selfName)
+			}()
 		}
 	}
+}
+
+// buildContainerMaps builds name→ID and name→state maps from the given containers.
+func buildContainerMaps(containers []docker.ContainerInfo) (nameToID, nameToState map[string]string) {
+	nameToID = make(map[string]string)
+	nameToState = make(map[string]string)
+	for _, c := range containers {
+		nameToID[c.Name] = c.ID
+		nameToState[c.Name] = c.State
+	}
+	return nameToID, nameToState
 }
 
 // runStartupReconciliation finds parents that are already unhealthy or stopped and runs full recovery.
@@ -136,12 +170,7 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		docker.LogError("startup list containers", "error", err)
 		return
 	}
-	nameToID := make(map[string]string)
-	nameToState := make(map[string]string)
-	for _, c := range containers {
-		nameToID[c.Name] = c.ID
-		nameToState[c.Name] = c.State
-	}
+	nameToID, nameToState := buildContainerMaps(containers)
 	for parentName := range *m {
 		id, ok := nameToID[parentName]
 		if !ok {
@@ -150,11 +179,14 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		state := nameToState[parentName]
 		if state != "running" {
 			docker.LogInfo("startup: parent not running", "parent", parentName, "state", state)
-			if cooldown.allow(parentName) {
+			func() {
+				if !cooldown.StartRecovery(parentName) {
+					docker.LogDebug("startup: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
+					return
+				}
+				defer cooldown.EndRecovery(parentName)
 				flow.RunFullSequence(ctx, id, parentName, m, selfName)
-			} else {
-				docker.LogDebug("startup: skipping recovery, in cooldown", "parent", parentName)
-			}
+			}()
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
@@ -162,11 +194,14 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 			continue
 		}
 		docker.LogInfo("startup: parent already unhealthy", "parent", parentName)
-		if cooldown.allow(parentName) {
+		func() {
+			if !cooldown.StartRecovery(parentName) {
+				docker.LogDebug("startup: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
+				return
+			}
+			defer cooldown.EndRecovery(parentName)
 			flow.RunFullSequence(ctx, id, parentName, m, selfName)
-		} else {
-			docker.LogDebug("startup: skipping recovery, in cooldown", "parent", parentName)
-		}
+		}()
 	}
 }
 
@@ -189,12 +224,7 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 			if err != nil {
 				continue
 			}
-			nameToID := make(map[string]string)
-			nameToState := make(map[string]string)
-			for _, c := range containers {
-				nameToID[c.Name] = c.ID
-				nameToState[c.Name] = c.State
-			}
+			nameToID, nameToState := buildContainerMaps(containers)
 			for parentName := range parentToDeps {
 				id, ok := nameToID[parentName]
 				if !ok {
@@ -203,10 +233,11 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				state := nameToState[parentName]
 				if state != "running" {
 					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
-					if cooldown.allow(parentName) {
+					if cooldown.StartRecovery(parentName) {
+						defer cooldown.EndRecovery(parentName)
 						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
 					} else {
-						docker.LogDebug("polling: skipping recovery, in cooldown", "parent", parentName, "id", id, "reason", "cooldown denied")
+						docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
 					}
 					continue
 				}
@@ -217,10 +248,11 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				}
 				if health == "unhealthy" {
 					docker.LogInfo("polling: unhealthy parent", "parent", parentName)
-					if cooldown.allow(parentName) {
+					if cooldown.StartRecovery(parentName) {
+						defer cooldown.EndRecovery(parentName)
 						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
 					} else {
-						docker.LogDebug("polling: skipping recovery, in cooldown", "parent", parentName, "reason", "cooldown denied")
+						docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
 					}
 				}
 			}

@@ -15,6 +15,7 @@ const defaultWaitHealthyTimeout = 5 * time.Minute
 
 // Flow runs the full recovery sequence: restart parent, wait until healthy, restart dependents.
 type Flow struct {
+	// Client is the Docker client used for restart and inspect.
 	Client *docker.Client
 }
 
