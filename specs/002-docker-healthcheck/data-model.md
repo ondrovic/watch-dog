@@ -8,12 +8,12 @@ This feature does not introduce new persistent data; it adds **configuration ent
 
 ### Healthcheck configuration (runtime / compose)
 
-- **Source**: Environment or compose `healthcheck:` block; .env variables INTERVAL_IN_SECS, RETRIES, START_PERIOD_IN_SECS, TIMEOUT_IN_SECS.
+- **Source**: Environment or compose `healthcheck:` block; .env variables DOCKER_HEALTHCHECK_INTERVAL, DOCKER_HEALTHCHECK_RETRIES, DOCKER_HEALTHCHECK_START_PERIOD, DOCKER_HEALTHCHECK_TIMEOUT.
 - **Attributes**:
-  - **interval**: Duration between checks (e.g. 15s). Canonical env: INTERVAL_IN_SECS.
-  - **start_period**: Grace period before failures count (e.g. 20s). Canonical env: START_PERIOD_IN_SECS.
-  - **timeout**: Max time for one check (e.g. 10s). Canonical env: TIMEOUT_IN_SECS.
-  - **retries**: Consecutive failures before unhealthy (e.g. 2). Canonical env: RETRIES.
+  - **interval**: Duration between checks (e.g. 15s). Canonical env: DOCKER_HEALTHCHECK_INTERVAL.
+  - **start_period**: Grace period before failures count (e.g. 20s). Canonical env: DOCKER_HEALTHCHECK_START_PERIOD.
+  - **timeout**: Max time for one check (e.g. 10s). Canonical env: DOCKER_HEALTHCHECK_TIMEOUT.
+  - **retries**: Consecutive failures before unhealthy (e.g. 2). Canonical env: DOCKER_HEALTHCHECK_RETRIES.
 - **Validation**: Values must be valid for the Docker healthcheck schema (positive durations / integers). Invalid or unset use image defaults (see contracts).
 - **Relationship**: Applied to the watch-dog container at run time; Dockerfile provides default HEALTHCHECK; compose overrides via env substitution.
 

@@ -1,3 +1,6 @@
+// Package main is the watch-dog entrypoint: it monitors container health via Docker
+// events, discovers parent/dependent relationships from the compose file, and runs
+// recovery (restart parent, wait until healthy, then restart dependents).
 package main
 
 import (
@@ -12,8 +15,11 @@ import (
 	"watch-dog/internal/recovery"
 )
 
+// main initializes logging from env, creates the Docker client, builds parent-to-dependents
+// discovery from the compose file, subscribes to health-status events, runs startup
+// reconciliation and a polling fallback, and executes recovery (restart parent then
+// dependents) when a parent becomes unhealthy.
 func main() {
-	docker.InitLogging()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

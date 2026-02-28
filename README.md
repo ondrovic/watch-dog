@@ -59,10 +59,10 @@ The watch-dog image includes a **HEALTHCHECK** that runs a minimal Docker API ch
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `INTERVAL_IN_SECS` | Time between health checks | `15s` |
-| `RETRIES` | Consecutive failures before unhealthy | `2` |
-| `START_PERIOD_IN_SECS` | Grace period before failures count | `20s` |
-| `TIMEOUT_IN_SECS` | Max time for one check | `10s` |
+| `DOCKER_HEALTHCHECK_INTERVAL` | Time between health checks (duration with unit) | `15s` |
+| `DOCKER_HEALTHCHECK_RETRIES` | Consecutive failures before unhealthy | `2` |
+| `DOCKER_HEALTHCHECK_START_PERIOD` | Grace period before failures count (duration with unit) | `20s` |
+| `DOCKER_HEALTHCHECK_TIMEOUT` | Max time for one check (duration with unit) | `10s` |
 
 Compose example using variable substitution:
 
@@ -71,14 +71,14 @@ watch-dog:
   image: ghcr.io/<owner>/watch-dog:latest
   healthcheck:
     test: ["CMD", "docker", "info"]
-    interval: ${INTERVAL_IN_SECS}
-    start_period: ${START_PERIOD_IN_SECS}
-    timeout: ${TIMEOUT_IN_SECS}
-    retries: ${RETRIES}
+    interval: ${DOCKER_HEALTHCHECK_INTERVAL:-15s}
+    start_period: ${DOCKER_HEALTHCHECK_START_PERIOD:-20s}
+    timeout: ${DOCKER_HEALTHCHECK_TIMEOUT:-10s}
+    retries: ${DOCKER_HEALTHCHECK_RETRIES:-2}
   # ... environment, volumes, etc.
 ```
 
-Use a `.env` file or export these variables so Compose can substitute them (e.g. `INTERVAL_IN_SECS=15s`, `RETRIES=2`, `START_PERIOD_IN_SECS=20s`, `TIMEOUT_IN_SECS=10s`).
+Use a `.env` file or export these variables so Compose can substitute them (e.g. `DOCKER_HEALTHCHECK_INTERVAL=15s`, `DOCKER_HEALTHCHECK_RETRIES=2`, `DOCKER_HEALTHCHECK_START_PERIOD=20s`, `DOCKER_HEALTHCHECK_TIMEOUT=10s`).
 
 ## How to use
 

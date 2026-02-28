@@ -5,7 +5,7 @@
 
 ## Summary
 
-Add a Docker healthcheck to the watch-dog image (Docker API–based liveness check), make healthcheck parameters configurable via .env (INTERVAL_IN_SECS, RETRIES, START_PERIOD_IN_SECS, TIMEOUT_IN_SECS), and improve log output: configurable LOG_LEVEL (DEBUG, INFO, WARN, ERROR) and LOG_FORMAT (compact, timestamp, optional json) with human-readable styles. Document all options and provide README examples for every LOG_LEVEL and LOG_FORMAT configuration.
+Add a Docker healthcheck to the watch-dog image (Docker API–based liveness check), make healthcheck parameters configurable via .env (DOCKER_HEALTHCHECK_INTERVAL, DOCKER_HEALTHCHECK_RETRIES, DOCKER_HEALTHCHECK_START_PERIOD, DOCKER_HEALTHCHECK_TIMEOUT), and improve log output: configurable LOG_LEVEL (DEBUG, INFO, WARN, ERROR) and LOG_FORMAT (compact, timestamp, optional json) with human-readable styles. Document all options and provide README examples for every LOG_LEVEL and LOG_FORMAT configuration.
 
 ## Technical Context
 

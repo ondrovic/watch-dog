@@ -45,8 +45,10 @@ func levelFromEnv() slog.Level {
 
 // compactHandlerStruct writes [LEVEL] message key=value...
 type compactHandlerStruct struct {
-	opts *slog.HandlerOptions
-	w    io.Writer
+	opts   *slog.HandlerOptions
+	w      io.Writer
+	attrs  []slog.Attr
+	groups []string
 }
 
 func newCompactHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
@@ -64,17 +66,33 @@ func (h *compactHandlerStruct) Enabled(_ context.Context, level slog.Level) bool
 	return level >= min
 }
 
+func appendCompactAttr(buf []byte, prefix string, a slog.Attr) []byte {
+	key := a.Key
+	if prefix != "" {
+		key = prefix + key
+	}
+	buf = append(buf, ' ')
+	buf = append(buf, key...)
+	buf = append(buf, '=')
+	buf = append(buf, a.Value.String()...)
+	return buf
+}
+
 func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 	buf := make([]byte, 0, 256)
 	buf = append(buf, '[')
 	buf = append(buf, r.Level.String()...)
 	buf = append(buf, "] "...)
 	buf = append(buf, r.Message...)
+	prefix := strings.Join(h.groups, ".")
+	if prefix != "" {
+		prefix += "."
+	}
+	for _, a := range h.attrs {
+		buf = appendCompactAttr(buf, prefix, a)
+	}
 	r.Attrs(func(a slog.Attr) bool {
-		buf = append(buf, ' ')
-		buf = append(buf, a.Key...)
-		buf = append(buf, '=')
-		buf = append(buf, a.Value.String()...)
+		buf = appendCompactAttr(buf, prefix, a)
 		return true
 	})
 	buf = append(buf, '\n')
@@ -83,17 +101,33 @@ func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 }
 
 func (h *compactHandlerStruct) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h
+	if len(attrs) == 0 {
+		return h
+	}
+	clone := *h
+	clone.attrs = make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	clone.attrs = append(clone.attrs, h.attrs...)
+	clone.attrs = append(clone.attrs, attrs...)
+	return &clone
 }
 
 func (h *compactHandlerStruct) WithGroup(name string) slog.Handler {
-	return h
+	if name == "" {
+		return h
+	}
+	clone := *h
+	clone.groups = make([]string, 0, len(h.groups)+1)
+	clone.groups = append(clone.groups, h.groups...)
+	clone.groups = append(clone.groups, name)
+	return &clone
 }
 
 // timestampHandler writes 2006-01-02T15:04:05Z07:00 [LEVEL] message key=value...
 type timestampHandlerStruct struct {
-	opts *slog.HandlerOptions
-	w    io.Writer
+	opts   *slog.HandlerOptions
+	w      io.Writer
+	attrs  []slog.Attr
+	groups []string
 }
 
 func newTimestampHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
@@ -111,6 +145,18 @@ func (h *timestampHandlerStruct) Enabled(_ context.Context, level slog.Level) bo
 	return level >= min
 }
 
+func appendTimestampAttr(buf []byte, prefix string, a slog.Attr) []byte {
+	key := a.Key
+	if prefix != "" {
+		key = prefix + key
+	}
+	buf = append(buf, ' ')
+	buf = append(buf, key...)
+	buf = append(buf, '=')
+	buf = append(buf, a.Value.String()...)
+	return buf
+}
+
 func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 	buf := make([]byte, 0, 320)
 	buf = r.Time.AppendFormat(buf, time.RFC3339)
@@ -118,11 +164,15 @@ func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error 
 	buf = append(buf, r.Level.String()...)
 	buf = append(buf, "] "...)
 	buf = append(buf, r.Message...)
+	prefix := strings.Join(h.groups, ".")
+	if prefix != "" {
+		prefix += "."
+	}
+	for _, a := range h.attrs {
+		buf = appendTimestampAttr(buf, prefix, a)
+	}
 	r.Attrs(func(a slog.Attr) bool {
-		buf = append(buf, ' ')
-		buf = append(buf, a.Key...)
-		buf = append(buf, '=')
-		buf = append(buf, a.Value.String()...)
+		buf = appendTimestampAttr(buf, prefix, a)
 		return true
 	})
 	buf = append(buf, '\n')
@@ -131,11 +181,25 @@ func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error 
 }
 
 func (h *timestampHandlerStruct) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h
+	if len(attrs) == 0 {
+		return h
+	}
+	clone := *h
+	clone.attrs = make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	clone.attrs = append(clone.attrs, h.attrs...)
+	clone.attrs = append(clone.attrs, attrs...)
+	return &clone
 }
 
 func (h *timestampHandlerStruct) WithGroup(name string) slog.Handler {
-	return h
+	if name == "" {
+		return h
+	}
+	clone := *h
+	clone.groups = make([]string, 0, len(h.groups)+1)
+	clone.groups = append(clone.groups, h.groups...)
+	clone.groups = append(clone.groups, name)
+	return &clone
 }
 
 // LogDebug logs a debug message with key-value pairs.

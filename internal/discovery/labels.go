@@ -1,3 +1,5 @@
+// Package discovery provides compose path resolution from environment variables
+// and builds the parent-to-dependents map from root-level depends_on.
 package discovery
 
 import (
@@ -10,6 +12,7 @@ import (
 
 // ComposePathFromEnv returns the path to the compose file for root-level depends_on discovery.
 // Checks WATCHDOG_COMPOSE_PATH first, then COMPOSE_FILE (first path if colon-separated).
+// A leading colon in COMPOSE_FILE (e.g. ":second.yml") results in an empty first path.
 // Empty means do not use compose-based discovery.
 func ComposePathFromEnv() string {
 	if p := os.Getenv("WATCHDOG_COMPOSE_PATH"); p != "" {

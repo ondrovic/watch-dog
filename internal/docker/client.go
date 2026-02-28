@@ -1,3 +1,5 @@
+// Package docker provides a Docker API client for listing containers, inspecting
+// health status, and restarting containers, plus logging and health-status event subscription.
 package docker
 
 import (

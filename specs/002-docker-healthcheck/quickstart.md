@@ -15,10 +15,10 @@ Example `.env` (reference values):
 
 ```bash
 # Healthcheck (used by compose healthcheck: block)
-INTERVAL_IN_SECS=15s
-RETRIES=2
-START_PERIOD_IN_SECS=20s
-TIMEOUT_IN_SECS=10s
+DOCKER_HEALTHCHECK_INTERVAL=15s
+DOCKER_HEALTHCHECK_RETRIES=2
+DOCKER_HEALTHCHECK_START_PERIOD=20s
+DOCKER_HEALTHCHECK_TIMEOUT=10s
 ```
 
 Compose snippet using them:
@@ -28,10 +28,10 @@ watch-dog:
   image: ghcr.io/<owner>/watch-dog:latest
   healthcheck:
     test: ["CMD", "docker", "info"]
-    interval: ${INTERVAL_IN_SECS}
-    start_period: ${START_PERIOD_IN_SECS}
-    timeout: ${TIMEOUT_IN_SECS}
-    retries: ${RETRIES}
+    interval: ${DOCKER_HEALTHCHECK_INTERVAL:-15s}
+    start_period: ${DOCKER_HEALTHCHECK_START_PERIOD:-20s}
+    timeout: ${DOCKER_HEALTHCHECK_TIMEOUT:-10s}
+    retries: ${DOCKER_HEALTHCHECK_RETRIES:-2}
   # ... volumes, environment, etc.
 ```
 
@@ -108,10 +108,10 @@ services:
       - .:/app:ro
     healthcheck:
       test: ["CMD", "docker", "info"]
-      interval: ${INTERVAL_IN_SECS:-15s}
-      start_period: ${START_PERIOD_IN_SECS:-20s}
-      timeout: ${TIMEOUT_IN_SECS:-10s}
-      retries: ${RETRIES:-2}
+      interval: ${DOCKER_HEALTHCHECK_INTERVAL:-15s}
+      start_period: ${DOCKER_HEALTHCHECK_START_PERIOD:-20s}
+      timeout: ${DOCKER_HEALTHCHECK_TIMEOUT:-10s}
+      retries: ${DOCKER_HEALTHCHECK_RETRIES:-2}
     restart: unless-stopped
 
   # ... your other services (vpn, dependents, etc.)
@@ -121,10 +121,10 @@ Optional `.env`:
 
 ```bash
 # Healthcheck
-INTERVAL_IN_SECS=15s
-RETRIES=2
-START_PERIOD_IN_SECS=20s
-TIMEOUT_IN_SECS=10s
+DOCKER_HEALTHCHECK_INTERVAL=15s
+DOCKER_HEALTHCHECK_RETRIES=2
+DOCKER_HEALTHCHECK_START_PERIOD=20s
+DOCKER_HEALTHCHECK_TIMEOUT=10s
 
 # Logging
 LOG_LEVEL=INFO

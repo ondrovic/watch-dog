@@ -1,3 +1,5 @@
+// Package recovery implements the restart flow: restart parent, wait until healthy,
+// then restart dependents.
 package recovery
 
 import (
@@ -53,6 +55,7 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 // discovery may be nil; then no dependents are restarted.
 func (f *Flow) RestartDependents(ctx context.Context, parentName string, discovery *discovery.ParentToDependents) {
 	if discovery == nil {
+		docker.LogDebug("no discovery available, skipping restart of dependents", "parentName", parentName)
 		return
 	}
 	deps := discovery.GetDependents(parentName)

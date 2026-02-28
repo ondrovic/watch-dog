@@ -16,14 +16,14 @@ This contract defines the environment variables used for log configuration and f
 
 ## Healthcheck (Compose)
 
-Used in the compose `healthcheck:` block with variable substitution (e.g. `interval: ${INTERVAL_IN_SECS}`). Not read by the watch-dog process; Compose injects them when evaluating the compose file.
+Used in the compose `healthcheck:` block with variable substitution (e.g. `interval: ${DOCKER_HEALTHCHECK_INTERVAL:-15s}`). Not read by the watch-dog process; Compose injects them when evaluating the compose file. Variables use the DOCKER_HEALTHCHECK_ prefix to avoid collision with generic env names.
 
-| Variable               | Example | Description |
-|------------------------|---------|-------------|
-| INTERVAL_IN_SECS       | 15s     | Time between health checks. |
-| START_PERIOD_IN_SECS   | 20s     | Grace period before failures count. |
-| TIMEOUT_IN_SECS        | 10s     | Max time for one check. |
-| RETRIES                | 2       | Consecutive failures before unhealthy. |
+| Variable                         | Example   | Description |
+|----------------------------------|-----------|-------------|
+| DOCKER_HEALTHCHECK_INTERVAL      | 15s       | Time between health checks. Value must be a duration string with unit (e.g. 15s, 1m30s), not a raw number. |
+| DOCKER_HEALTHCHECK_START_PERIOD  | 20s       | Grace period before failures count. Value must be a duration string with unit (e.g. 20s, 1m), not a raw number. |
+| DOCKER_HEALTHCHECK_TIMEOUT       | 10s       | Max time for one check. Value must be a duration string with unit (e.g. 10s, 30s), not a raw number. |
+| DOCKER_HEALTHCHECK_RETRIES       | 2         | Consecutive failures before unhealthy. |
 
 - The Dockerfile HEALTHCHECK uses fixed defaults (same numeric values); Compose overrides when these variables are set in .env or environment.
 - README and quickstart MUST show a compose example that uses these variables (no hardcoded values in the example).

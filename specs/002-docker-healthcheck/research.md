@@ -4,7 +4,7 @@
 
 ## 1. Healthcheck: Docker API check inside the container
 
-**Decision**: Add the **Docker CLI** to the runtime image (Alpine) and use a HEALTHCHECK that runs `docker info` (or `docker ps -q`) with the socket already mounted. Use default intervals in the Dockerfile (interval 15s, start_period 20s, timeout 10s, retries 2); compose example uses variable substitution from .env (INTERVAL_IN_SECS, RETRIES, START_PERIOD_IN_SECS, TIMEOUT_IN_SECS) so users override without rebuilding.
+**Decision**: Add the **Docker CLI** to the runtime image (Alpine) and use a HEALTHCHECK that runs `docker info` (or `docker ps -q`) with the socket already mounted. Use default intervals in the Dockerfile (interval 15s, start_period 20s, timeout 10s, retries 2); compose example uses variable substitution from .env (DOCKER_HEALTHCHECK_INTERVAL, DOCKER_HEALTHCHECK_RETRIES, DOCKER_HEALTHCHECK_START_PERIOD, DOCKER_HEALTHCHECK_TIMEOUT) so users override without rebuilding.
 
 **Rationale**: Spec requires a minimal Docker API check (no HTTP server). The monitor already has the socket mounted; running `docker info` from inside the container proves the process can talk to the daemon. Alpine can install `docker-cli` via `apk add docker-cli`. Alternative of a small Go healthcheck binary or `wget` to a local endpoint would require either exposing HTTP (rejected) or a second binary (more complexity).
 
@@ -57,6 +57,6 @@
 
 ## 6. Healthcheck parameters in Dockerfile vs compose
 
-**Decision**: **Dockerfile**: Use a single HEALTHCHECK instruction with literal defaults (e.g. `--interval=15s --start-period=20s --timeout=10s --retries=2` and `CMD docker info` or `CMD docker ps -q`). **Compose example**: Use `healthcheck:` with variable substitution: `interval: ${INTERVAL_IN_SECS}`, `start_period: ${START_PERIOD_IN_SECS}`, `timeout: ${TIMEOUT_IN_SECS}`, `retries: ${RETRIES}`, so when users run with a `.env` file the healthcheck parameters come from .env. Document in README that the image has built-in defaults and compose allows overrides via .env.
+**Decision**: **Dockerfile**: Use a single HEALTHCHECK instruction with literal defaults (e.g. `--interval=15s --start-period=20s --timeout=10s --retries=2` and `CMD docker info` or `CMD docker ps -q`). **Compose example**: Use `healthcheck:` with variable substitution: `interval: ${DOCKER_HEALTHCHECK_INTERVAL:-15s}`, `start_period: ${DOCKER_HEALTHCHECK_START_PERIOD:-20s}`, `timeout: ${DOCKER_HEALTHCHECK_TIMEOUT:-10s}`, `retries: ${DOCKER_HEALTHCHECK_RETRIES:-2}`, so when users run with a `.env` file the healthcheck parameters come from .env. Document in README that the image has built-in defaults and compose allows overrides via .env.
 
 **Rationale**: Dockerfile HEALTHCHECK does not support env substitution at runtime; values are fixed at build time. Compose does support `${VAR}` for healthcheck; so image ships with sensible defaults and compose users get .env-driven config without rebuilding.

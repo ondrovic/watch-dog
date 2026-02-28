@@ -53,7 +53,7 @@ description: "Task list for 002-docker-healthcheck feature implementation"
 ### Implementation for User Story 1
 
 - [x] T003 [P] [US1] Add HEALTHCHECK instruction to Dockerfile with defaults `--interval=15s --start-period=20s --timeout=10s --retries=2` and test command `docker info` as the HEALTHCHECK CMD (e.g. `HEALTHCHECK ... CMD docker info`)
-- [x] T004 [P] [US1] Document healthcheck in README.md: new section describing how health is determined, .env variable names (INTERVAL_IN_SECS, RETRIES, START_PERIOD_IN_SECS, TIMEOUT_IN_SECS) with reference values (15s, 2, 20s, 10s), transient failure and timeout behavior (e.g. socket unavailable, heavy load) for operator troubleshooting, and a compose example using variable substitution (no hardcoded values in the example)
+- [x] T004 [P] [US1] Document healthcheck in README.md: new section describing how health is determined, .env variable names (DOCKER_HEALTHCHECK_INTERVAL, DOCKER_HEALTHCHECK_RETRIES, DOCKER_HEALTHCHECK_START_PERIOD, DOCKER_HEALTHCHECK_TIMEOUT) with reference values (15s, 2, 20s, 10s), transient failure and timeout behavior (e.g. socket unavailable, heavy load) for operator troubleshooting, and a compose example using variable substitution (no hardcoded values in the example)
 
 **Checkpoint**: User Story 1 is done; container reports health status and README explains healthcheck and .env overrides.
 
