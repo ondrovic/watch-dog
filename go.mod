@@ -1,8 +1,11 @@
 module watch-dog
 
-go 1.25.0
+go 1.24.0
 
-require github.com/docker/docker v27.0.0+incompatible
+require (
+	github.com/docker/docker v27.0.0+incompatible
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/Microsoft/go-winio v0.4.21 // indirect
@@ -29,6 +32,5 @@ require (
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
