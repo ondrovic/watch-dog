@@ -31,7 +31,15 @@ func main() {
 
 	flow := &recovery.Flow{Client: cli, Discovery: &parentToDeps}
 
-	// Startup reconciliation: treat already-unhealthy parents (per contracts/recovery-behavior.md)
+	// Log startup and discovered parents so there is always visible output (e.g. docker logs watch-dog).
+	parentNames := parentToDeps.ParentNames()
+	if len(parentNames) == 0 {
+		docker.LogWarn("no parents discovered; set WATCHDOG_COMPOSE_PATH and mount the compose file", "path", discovery.ComposePathFromEnv())
+	} else {
+		docker.LogInfo("watch-dog started", "parents", parentNames)
+	}
+
+	// Startup reconciliation: treat already-unhealthy or stopped parents (per contracts/recovery-behavior.md).
 	runStartupReconciliation(ctx, cli, &parentToDeps, flow)
 
 	healthCh := make(chan docker.HealthEvent, 8)
@@ -57,26 +65,34 @@ func main() {
 			if !parentToDeps.IsParent(ev.ContainerName) {
 				continue
 			}
-			docker.LogInfo("unhealthy parent detected", "parent", ev.ContainerName, "id", ev.ContainerID)
+			docker.LogInfo("parent needs recovery", "parent", ev.ContainerName, "id", ev.ContainerID, "reason", ev.Status)
 			flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName)
 		}
 	}
 }
 
-// runStartupReconciliation finds parents that are already unhealthy and runs full recovery.
+// runStartupReconciliation finds parents that are already unhealthy or stopped and runs full recovery.
 func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discovery.ParentToDependents, flow *recovery.Flow) {
-	containers, err := cli.ListContainers(ctx)
+	containers, err := cli.ListContainers(ctx, true)
 	if err != nil {
 		docker.LogError("startup list containers", "error", err)
 		return
 	}
 	nameToID := make(map[string]string)
+	nameToState := make(map[string]string)
 	for _, c := range containers {
 		nameToID[c.Name] = c.ID
+		nameToState[c.Name] = c.State
 	}
 	for parentName := range *m {
 		id, ok := nameToID[parentName]
 		if !ok {
+			continue
+		}
+		state := nameToState[parentName]
+		if state != "running" {
+			docker.LogInfo("startup: parent not running", "parent", parentName, "state", state)
+			flow.RunFullSequence(ctx, id, parentName)
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
@@ -104,17 +120,25 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				continue
 			}
 			flow.Discovery = &parentToDeps
-			containers, err := cli.ListContainers(ctx)
+			containers, err := cli.ListContainers(ctx, true)
 			if err != nil {
 				continue
 			}
 			nameToID := make(map[string]string)
+			nameToState := make(map[string]string)
 			for _, c := range containers {
 				nameToID[c.Name] = c.ID
+				nameToState[c.Name] = c.State
 			}
 			for parentName := range parentToDeps {
 				id, ok := nameToID[parentName]
 				if !ok {
+					continue
+				}
+				state := nameToState[parentName]
+				if state != "running" {
+					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
+					flow.RunFullSequence(ctx, id, parentName)
 					continue
 				}
 				health, _, _ := cli.Inspect(ctx, id)

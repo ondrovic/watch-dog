@@ -18,6 +18,7 @@ type ContainerInfo struct {
 	ID     string
 	Name   string
 	Labels map[string]string
+	State  string // "running", "exited", etc.; only set when ListContainers is called with all=true
 }
 
 // NewClient creates a Docker client using DOCKER_HOST (default unix socket).
@@ -29,9 +30,11 @@ func NewClient(ctx context.Context) (*Client, error) {
 	return &Client{cli: cli}, nil
 }
 
-// ListContainers returns running containers with their labels (name without leading /).
-func (c *Client) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
-	opts := container.ListOptions{All: false}
+// ListContainers returns containers with their labels (name without leading /).
+// If all is false, only running containers are returned and State is not set.
+// If all is true, all containers are returned and State is set ("running", "exited", etc.).
+func (c *Client) ListContainers(ctx context.Context, all bool) ([]ContainerInfo, error) {
+	opts := container.ListOptions{All: all}
 	list, err := c.cli.ContainerList(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -42,11 +45,15 @@ func (c *Client) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
 		if len(name) > 0 && name[0] == '/' {
 			name = name[1:]
 		}
-		out = append(out, ContainerInfo{
+		info := ContainerInfo{
 			ID:     cnt.ID,
 			Name:   name,
 			Labels: cnt.Labels,
-		})
+		}
+		if all {
+			info.State = cnt.State
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }

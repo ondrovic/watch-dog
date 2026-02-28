@@ -148,7 +148,8 @@ func BuildParentToDependentsFromCompose(ctx context.Context, cli *docker.Client,
 	if len(svcParentToDeps) == 0 {
 		return make(ParentToDependents), nil
 	}
-	containers, err := cli.ListContainers(ctx)
+	// Include stopped containers so we still see parent services when a parent is stopped.
+	containers, err := cli.ListContainers(ctx, true)
 	if err != nil {
 		return nil, err
 	}

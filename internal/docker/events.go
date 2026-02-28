@@ -14,10 +14,11 @@ type HealthEvent struct {
 	Status        string // "health_status: unhealthy" etc.
 }
 
-// SubscribeHealthStatus subscribes to Docker health_status events and sends unhealthy events to the channel.
+// SubscribeHealthStatus subscribes to Docker container events: health_status (unhealthy), die, and stop.
+// When a parent container goes unhealthy or stops, the event is sent to the channel so recovery can run.
 // The context cancels the subscription. The channel is closed when the subscription ends.
 func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEvent) {
-	opts := events.ListOptions{Filters: newHealthStatusFilter()}
+	opts := events.ListOptions{Filters: newRecoveryEventFilter()}
 	msgs, errs := c.cli.Events(ctx, opts)
 	go func() {
 		defer close(out)
@@ -37,9 +38,11 @@ func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEve
 				if e.Type != events.ContainerEventType {
 					continue
 				}
-				if e.Action != "health_status: unhealthy" {
+				action := e.Action
+				if action != "health_status: unhealthy" && action != "die" && action != "stop" {
 					continue
 				}
+				// For health_status the attribute is "health_status"; for die/stop use "name"
 				name := e.Actor.Attributes["name"]
 				if name == "" {
 					name = e.Actor.ID
@@ -48,7 +51,7 @@ func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEve
 				case out <- HealthEvent{
 					ContainerID:   e.Actor.ID,
 					ContainerName: name,
-					Status:        string(e.Action),
+					Status:        string(action),
 				}:
 				case <-ctx.Done():
 					return
@@ -58,8 +61,11 @@ func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEve
 	}()
 }
 
-func newHealthStatusFilter() filters.Args {
+func newRecoveryEventFilter() filters.Args {
 	f := filters.NewArgs()
+	f.Add("type", "container")
 	f.Add("event", "health_status")
+	f.Add("event", "die")
+	f.Add("event", "stop")
 	return f
 }

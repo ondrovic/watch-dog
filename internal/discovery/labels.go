@@ -44,3 +44,12 @@ func (m ParentToDependents) GetDependents(parentName string) []string {
 func (m ParentToDependents) IsParent(containerName string) bool {
 	return len(m[containerName]) > 0
 }
+
+// ParentNames returns the list of parent container names (for logging).
+func (m ParentToDependents) ParentNames() []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	return names
+}
