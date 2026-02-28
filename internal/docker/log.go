@@ -46,26 +46,14 @@ func levelFromEnv() slog.Level {
 
 // compactHandlerStruct writes [LEVEL] message key=value...
 type compactHandlerStruct struct {
-	opts   *slog.HandlerOptions
-	w      io.Writer
-	mu     *sync.Mutex
-	attrs  []slog.Attr
-	groups []string
+	baseHandler
 }
 
 func newCompactHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
-	return &compactHandlerStruct{opts: opts, w: w, mu: &sync.Mutex{}}
-}
-
-func (h *compactHandlerStruct) Enabled(_ context.Context, level slog.Level) bool {
-	min := slog.LevelInfo
-	if h.opts != nil && h.opts.Level != nil {
-		min = h.opts.Level.Level()
-	}
-	return level >= min
+	return &compactHandlerStruct{baseHandler: baseHandler{opts: opts, w: w, mu: &sync.Mutex{}}}
 }
 
 // processAttr resolves a.Value (honoring LogValuer) and applies ReplaceAttr from
@@ -89,10 +77,7 @@ func appendProcessedAttrs(buf []byte, prefix string, groups []string, attrs []sl
 			continue
 		}
 		if a.Value.Kind() == slog.KindGroup {
-			childPrefix := prefix
-			if a.Key != "" {
-				childPrefix = prefix + a.Key + "."
-			}
+			childPrefix := prefix + a.Key + "."
 			childGroups := make([]string, len(groups), len(groups)+1)
 			copy(childGroups, groups)
 			childGroups = append(childGroups, a.Key)
@@ -116,12 +101,38 @@ func appendAttr(buf []byte, prefix string, a slog.Attr) []byte {
 	return buf
 }
 
-func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
-	buf := make([]byte, 0, 256)
-	buf = append(buf, '[')
-	buf = append(buf, r.Level.String()...)
-	buf = append(buf, "] "...)
-	buf = append(buf, r.Message...)
+// baseHandler holds shared state and logic for compact and timestamp slog handlers.
+type baseHandler struct {
+	opts   *slog.HandlerOptions
+	w      io.Writer
+	mu     *sync.Mutex
+	attrs  []slog.Attr
+	groups []string
+}
+
+func (h *baseHandler) Enabled(_ context.Context, level slog.Level) bool {
+	min := slog.LevelInfo
+	if h.opts != nil && h.opts.Level != nil {
+		min = h.opts.Level.Level()
+	}
+	return level >= min
+}
+
+func (h *baseHandler) addAttrs(additional []slog.Attr) []slog.Attr {
+	out := make([]slog.Attr, 0, len(h.attrs)+len(additional))
+	out = append(out, h.attrs...)
+	out = append(out, additional...)
+	return out
+}
+
+func (h *baseHandler) addGroup(name string) []string {
+	out := make([]string, 0, len(h.groups)+1)
+	out = append(out, h.groups...)
+	out = append(out, name)
+	return out
+}
+
+func (h *baseHandler) writeRecord(header []byte, r slog.Record) error {
 	prefix := strings.Join(h.groups, ".")
 	if prefix != "" {
 		prefix += "."
@@ -130,7 +141,7 @@ func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 	if h.opts != nil && h.opts.ReplaceAttr != nil {
 		replaceAttr = h.opts.ReplaceAttr
 	}
-	buf = appendProcessedAttrs(buf, prefix, h.groups, h.attrs, replaceAttr)
+	buf := appendProcessedAttrs(header, prefix, h.groups, h.attrs, replaceAttr)
 	r.Attrs(func(a slog.Attr) bool {
 		buf = appendProcessedAttrs(buf, prefix, h.groups, []slog.Attr{a}, replaceAttr)
 		return true
@@ -142,14 +153,21 @@ func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 	return err
 }
 
+func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
+	buf := make([]byte, 0, 256)
+	buf = append(buf, '[')
+	buf = append(buf, r.Level.String()...)
+	buf = append(buf, "] "...)
+	buf = append(buf, r.Message...)
+	return h.writeRecord(buf, r)
+}
+
 func (h *compactHandlerStruct) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
 	clone := *h
-	clone.attrs = make([]slog.Attr, 0, len(h.attrs)+len(attrs))
-	clone.attrs = append(clone.attrs, h.attrs...)
-	clone.attrs = append(clone.attrs, attrs...)
+	clone.attrs = h.addAttrs(attrs)
 	return &clone
 }
 
@@ -158,34 +176,20 @@ func (h *compactHandlerStruct) WithGroup(name string) slog.Handler {
 		return h
 	}
 	clone := *h
-	clone.groups = make([]string, 0, len(h.groups)+1)
-	clone.groups = append(clone.groups, h.groups...)
-	clone.groups = append(clone.groups, name)
+	clone.groups = h.addGroup(name)
 	return &clone
 }
 
-// timestampHandler writes 2006-01-02T15:04:05Z07:00 [LEVEL] message key=value...
+// timestampHandlerStruct writes 2006-01-02T15:04:05Z07:00 [LEVEL] message key=value...
 type timestampHandlerStruct struct {
-	opts   *slog.HandlerOptions
-	w      io.Writer
-	mu     *sync.Mutex
-	attrs  []slog.Attr
-	groups []string
+	baseHandler
 }
 
 func newTimestampHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
-	return &timestampHandlerStruct{opts: opts, w: w, mu: &sync.Mutex{}}
-}
-
-func (h *timestampHandlerStruct) Enabled(_ context.Context, level slog.Level) bool {
-	min := slog.LevelInfo
-	if h.opts != nil && h.opts.Level != nil {
-		min = h.opts.Level.Level()
-	}
-	return level >= min
+	return &timestampHandlerStruct{baseHandler: baseHandler{opts: opts, w: w, mu: &sync.Mutex{}}}
 }
 
 func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error {
@@ -195,24 +199,7 @@ func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error 
 	buf = append(buf, r.Level.String()...)
 	buf = append(buf, "] "...)
 	buf = append(buf, r.Message...)
-	prefix := strings.Join(h.groups, ".")
-	if prefix != "" {
-		prefix += "."
-	}
-	var replaceAttr func([]string, slog.Attr) slog.Attr
-	if h.opts != nil && h.opts.ReplaceAttr != nil {
-		replaceAttr = h.opts.ReplaceAttr
-	}
-	buf = appendProcessedAttrs(buf, prefix, h.groups, h.attrs, replaceAttr)
-	r.Attrs(func(a slog.Attr) bool {
-		buf = appendProcessedAttrs(buf, prefix, h.groups, []slog.Attr{a}, replaceAttr)
-		return true
-	})
-	buf = append(buf, '\n')
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	_, err := h.w.Write(buf)
-	return err
+	return h.writeRecord(buf, r)
 }
 
 func (h *timestampHandlerStruct) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -220,9 +207,7 @@ func (h *timestampHandlerStruct) WithAttrs(attrs []slog.Attr) slog.Handler {
 		return h
 	}
 	clone := *h
-	clone.attrs = make([]slog.Attr, 0, len(h.attrs)+len(attrs))
-	clone.attrs = append(clone.attrs, h.attrs...)
-	clone.attrs = append(clone.attrs, attrs...)
+	clone.attrs = h.addAttrs(attrs)
 	return &clone
 }
 
@@ -231,9 +216,7 @@ func (h *timestampHandlerStruct) WithGroup(name string) slog.Handler {
 		return h
 	}
 	clone := *h
-	clone.groups = make([]string, 0, len(h.groups)+1)
-	clone.groups = append(clone.groups, h.groups...)
-	clone.groups = append(clone.groups, name)
+	clone.groups = h.addGroup(name)
 	return &clone
 }
 
