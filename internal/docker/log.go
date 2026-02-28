@@ -66,7 +66,7 @@ func (h *compactHandlerStruct) Enabled(_ context.Context, level slog.Level) bool
 	return level >= min
 }
 
-func appendCompactAttr(buf []byte, prefix string, a slog.Attr) []byte {
+func appendAttr(buf []byte, prefix string, a slog.Attr) []byte {
 	key := a.Key
 	if prefix != "" {
 		key = prefix + key
@@ -89,10 +89,10 @@ func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 		prefix += "."
 	}
 	for _, a := range h.attrs {
-		buf = appendCompactAttr(buf, prefix, a)
+		buf = appendAttr(buf, prefix, a)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		buf = appendCompactAttr(buf, prefix, a)
+		buf = appendAttr(buf, prefix, a)
 		return true
 	})
 	buf = append(buf, '\n')
@@ -145,18 +145,6 @@ func (h *timestampHandlerStruct) Enabled(_ context.Context, level slog.Level) bo
 	return level >= min
 }
 
-func appendTimestampAttr(buf []byte, prefix string, a slog.Attr) []byte {
-	key := a.Key
-	if prefix != "" {
-		key = prefix + key
-	}
-	buf = append(buf, ' ')
-	buf = append(buf, key...)
-	buf = append(buf, '=')
-	buf = append(buf, a.Value.String()...)
-	return buf
-}
-
 func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 	buf := make([]byte, 0, 320)
 	buf = r.Time.AppendFormat(buf, time.RFC3339)
@@ -169,10 +157,10 @@ func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error 
 		prefix += "."
 	}
 	for _, a := range h.attrs {
-		buf = appendTimestampAttr(buf, prefix, a)
+		buf = appendAttr(buf, prefix, a)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		buf = appendTimestampAttr(buf, prefix, a)
+		buf = appendAttr(buf, prefix, a)
 		return true
 	})
 	buf = append(buf, '\n')
