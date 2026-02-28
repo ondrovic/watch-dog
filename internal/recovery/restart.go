@@ -72,7 +72,8 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 	if selfName != "" {
 		for i, name := range ordered {
 			if name == selfName {
-				ordered = append(ordered[:i], append(ordered[i+1:], name)...)
+				copy(ordered[i:], ordered[i+1:])
+				ordered[len(ordered)-1] = name
 				break
 			}
 		}
