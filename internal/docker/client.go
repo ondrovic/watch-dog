@@ -1,3 +1,5 @@
+// Package docker provides a Docker API client for listing containers, inspecting
+// health status, and restarting containers, plus logging and health-status event subscription.
 package docker
 
 import (
@@ -41,6 +43,9 @@ func (c *Client) ListContainers(ctx context.Context, all bool) ([]ContainerInfo,
 	}
 	out := make([]ContainerInfo, 0, len(list))
 	for _, cnt := range list {
+		if len(cnt.Names) == 0 {
+			continue
+		}
 		name := cnt.Names[0]
 		if len(name) > 0 && name[0] == '/' {
 			name = name[1:]

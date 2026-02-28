@@ -48,6 +48,38 @@ Short form `depends_on` is also supported:
 
 **Required**: Mount the compose file (e.g. `.:/app:ro`) and set `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`) to the path **inside the container** (e.g. `/app/docker-compose.yml`). Without this, the monitor will not discover any parents.
 
+## Healthcheck
+
+The watch-dog image includes a **HEALTHCHECK** that runs a minimal Docker API check (e.g. `docker info`) inside the container. With the Docker socket mounted, the check verifies the monitor can talk to the daemon. The container reports a health status (healthy / starting / unhealthy) in `docker ps` and in Compose.
+
+- **How health is determined**: The healthcheck runs the check command at a defined interval. Success (exit 0) means the container is healthy. After consecutive failures (e.g. socket unavailable, process not responding), the container becomes unhealthy. During the start period, failures do not count toward retries.
+- **Transient failures**: If the Docker socket or daemon is temporarily unavailable, the healthcheck may report unhealthy or starting until the next successful run. Under heavy load, the check runs within its timeout so it does not block the container; repeated failures lead to unhealthy.
+
+**Override in Compose**: Use .env variables so the healthcheck block is driven by your config (no hardcoded values). Reference values:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DOCKER_HEALTHCHECK_INTERVAL` | Time between health checks (duration with unit) | `15s` |
+| `DOCKER_HEALTHCHECK_RETRIES` | Consecutive failures before unhealthy | `2` |
+| `DOCKER_HEALTHCHECK_START_PERIOD` | Grace period before failures count (duration with unit) | `20s` |
+| `DOCKER_HEALTHCHECK_TIMEOUT` | Max time for one check (duration with unit) | `10s` |
+
+Compose example using variable substitution:
+
+```yaml
+watch-dog:
+  image: ghcr.io/<owner>/watch-dog:latest
+  healthcheck:
+    test: ["CMD", "docker", "info"]
+    interval: ${DOCKER_HEALTHCHECK_INTERVAL:-15s}
+    start_period: ${DOCKER_HEALTHCHECK_START_PERIOD:-20s}
+    timeout: ${DOCKER_HEALTHCHECK_TIMEOUT:-10s}
+    retries: ${DOCKER_HEALTHCHECK_RETRIES:-2}
+  # ... environment, volumes, etc.
+```
+
+Use a `.env` file or export these variables so Compose can substitute them (e.g. `DOCKER_HEALTHCHECK_INTERVAL=15s`, `DOCKER_HEALTHCHECK_RETRIES=2`, `DOCKER_HEALTHCHECK_START_PERIOD=20s`, `DOCKER_HEALTHCHECK_TIMEOUT=10s`).
+
 ## How to use
 
 ### Configuration
@@ -56,6 +88,37 @@ Short form `depends_on` is also supported:
 |----------|-------------|
 | `WATCHDOG_COMPOSE_PATH` | Path inside the container to the compose file (e.g. `/app/docker-compose.yml`). |
 | `COMPOSE_FILE` | Alternative; if set, the first path in a colon-separated list is used. |
+
+#### Logging: LOG_LEVEL and LOG_FORMAT
+
+Set these in the container environment to control what is logged and how it looks.
+
+**LOG_LEVEL** — only messages at this level or higher are output (default: `INFO`):
+
+| Value | Effect |
+|-------|--------|
+| `DEBUG` | All messages (debug, info, warn, error). Use for troubleshooting. |
+| `INFO` | Info, warn, error (default). Normal operation. |
+| `WARN` | Warn and error only. |
+| `ERROR` | Error only. |
+
+**LOG_FORMAT** — shape of each log line (default: `timestamp`):
+
+| Value | Example line |
+|-------|--------------|
+| `compact` | `[INFO] watch-dog started parents=[vpn dler ...]` |
+| `timestamp` | `2026-02-28T18:04:26Z [INFO] parent needs recovery parent=vpn reason=stop` |
+| `json` | `{"time":"2026-02-28T18:04:26Z","level":"INFO","msg":"parent needs recovery","parent":"vpn"}` |
+
+Compose example:
+
+```yaml
+environment:
+  - LOG_LEVEL=INFO
+  - LOG_FORMAT=timestamp
+```
+
+Or with defaults from .env: `LOG_LEVEL: ${LOG_LEVEL:-INFO}`, `LOG_FORMAT: ${LOG_FORMAT:-timestamp}`.
 
 Your compose file must declare dependencies with **root-level `depends_on`** per service (short list or long form with `condition` / `restart`). See [contracts/depends-on-label.md](specs/001-container-health-monitor/contracts/depends-on-label.md) for the exact format.
 
