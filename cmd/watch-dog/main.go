@@ -149,7 +149,13 @@ func main() {
 	// Run startup reconciliation exactly once when initial discovery phase ends (not at startup).
 	// Post-phase: no cascade—reconciliation runs once; cooldown/in-flight prevent duplicate runs (contracts/initial-discovery-behavior.md).
 	go func() {
-		time.Sleep(initialDiscoveryWait)
+		select {
+		case <-ctx.Done():
+			docker.LogInfo("shutdown during initial discovery wait, skipping startup reconciliation")
+			return
+		case <-time.After(initialDiscoveryWait):
+			// wait completed; proceed
+		}
 		docker.LogInfo("initial discovery complete, recovery enabled")
 		parentToDeps, err := discovery.BuildParentToDependents(ctx, cli)
 		if err != nil {
