@@ -38,6 +38,9 @@ func main() {
 
 	flow := &recovery.Flow{Client: cli}
 	selfName := os.Getenv("WATCHDOG_CONTAINER_NAME")
+	if selfName == "" {
+		docker.LogWarn("WATCHDOG_CONTAINER_NAME not set: self-last-restart behavior disabled")
+	}
 
 	// Log startup and discovered parents so there is always visible output (e.g. docker logs watch-dog).
 	parentNames := parentToDeps.ParentNames()

@@ -4,7 +4,7 @@ package recovery
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"time"
 
 	"watch-dog/internal/discovery"
@@ -65,18 +65,19 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 	if len(deps) == 0 {
 		return
 	}
+	ordered := slices.Clone(deps)
 	// Deterministic order: sort by name.
-	sort.Strings(deps)
+	slices.Sort(ordered)
 	// If self is in the list, move it to last so we don't cancel in-flight restarts.
 	if selfName != "" {
-		for i, name := range deps {
+		for i, name := range ordered {
 			if name == selfName {
-				deps = append(deps[:i], append(deps[i+1:], name)...)
+				ordered = append(ordered[:i], append(ordered[i+1:], name)...)
 				break
 			}
 		}
 	}
-	for _, name := range deps {
+	for _, name := range ordered {
 		if err := f.Client.Restart(ctx, name); err != nil {
 			docker.LogError("restart dependent", "dependent", name, "parent", parentName, "error", err)
 		} else {

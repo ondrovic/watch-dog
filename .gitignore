@@ -17,3 +17,4 @@ go.work
 Thumbs.db
 
 example/
+.coderabbit.yaml
