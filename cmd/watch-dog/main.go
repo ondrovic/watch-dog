@@ -26,8 +26,12 @@ func init() {
 		return
 	}
 	d, err := time.ParseDuration(s)
-	if err != nil {
-		docker.LogWarn("invalid RECOVERY_COOLDOWN, using default 2m", "value", s, "error", err)
+	if err != nil || d <= 0 {
+		reason := "must be positive"
+		if err != nil {
+			reason = err.Error()
+		}
+		docker.LogWarn("invalid RECOVERY_COOLDOWN, using default 2m", "value", s, "error", reason)
 		recoveryCooldown = defaultCooldown
 		return
 	}
@@ -201,6 +205,8 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
 					if cooldown.allow(parentName) {
 						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
+					} else {
+						docker.LogDebug("polling: skipping recovery, in cooldown", "parent", parentName, "id", id, "reason", "cooldown denied")
 					}
 					continue
 				}
