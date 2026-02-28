@@ -89,6 +89,7 @@ Use a `.env` file or export these variables so Compose can substitute them (e.g.
 | `WATCHDOG_COMPOSE_PATH` | Path inside the container to the compose file (e.g. `/app/docker-compose.yml`). |
 | `COMPOSE_FILE` | Alternative; if set, the first path in a colon-separated list is used. |
 | `WATCHDOG_CONTAINER_NAME` | Optional. When the monitor is a dependent of a recovered parent (e.g. in `depends_on`), set this to the monitor’s container name (e.g. `watch-dog`). The monitor will restart **all other** dependents first, then itself last, so in-flight restarts are not canceled. If unset, dependents are restarted in deterministic (e.g. alphabetical) order with no special handling for the monitor. |
+| `WATCHDOG_INITIAL_DISCOVERY_WAIT` | Optional. Duration to wait after the first discovery cycle before the monitor may run recovery (e.g. `30s`, `2m`, `5m`). Default: `60s`. Use when bringing the stack up with `docker compose up` so the monitor does not restart dependents during initial startup; set to at least how long your stack needs to become ready (e.g. `120s` or `5m`). Invalid or non-positive values fall back to 60s with a warning in logs. |
 
 #### Logging: LOG_LEVEL and LOG_FORMAT
 

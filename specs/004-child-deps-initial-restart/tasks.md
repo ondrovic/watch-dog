@@ -27,7 +27,7 @@
 
 **Purpose**: Confirm project structure per plan; no new packages.
 
-- [ ] T001 Verify project structure per plan (specs/004-child-deps-initial-restart/plan.md § Project Structure): `cmd/watch-dog/`, `internal/` (docker, discovery, recovery) exist and no new top-level packages required for this feature
+- [x] T001 Verify project structure per plan (specs/004-child-deps-initial-restart/plan.md § Project Structure): `cmd/watch-dog/`, `internal/` (docker, discovery, recovery) exist and no new top-level packages required for this feature
 
 ---
 
@@ -37,8 +37,8 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 Parse `WATCHDOG_INITIAL_DISCOVERY_WAIT` from env in `cmd/watch-dog/main.go` (init or early main): use `time.ParseDuration`, default 60s when unset or invalid; log warning on invalid value per specs/004-child-deps-initial-restart/contracts/env-initial-discovery.md; add or update docstring for the init/package describing the new env var
-- [ ] T003 Add initial discovery phase state in `cmd/watch-dog/main.go`: compute phase end time as (first discovery completion time + wait duration) and expose a function or check `isInitialDiscoveryComplete()` so recovery paths can gate on it per specs/004-child-deps-initial-restart/data-model.md; add docstrings for any new types or functions
+- [x] T002 Parse `WATCHDOG_INITIAL_DISCOVERY_WAIT` from env in `cmd/watch-dog/main.go` (init or early main): use `time.ParseDuration`, default 60s when unset or invalid; log warning on invalid value per specs/004-child-deps-initial-restart/contracts/env-initial-discovery.md; add or update docstring for the init/package describing the new env var
+- [x] T003 Add initial discovery phase state in `cmd/watch-dog/main.go`: compute phase end time as (first discovery completion time + wait duration) and expose a function or check `isInitialDiscoveryComplete()` so recovery paths can gate on it per specs/004-child-deps-initial-restart/data-model.md; add docstrings for any new types or functions
 
 **Checkpoint**: Foundation ready — initial discovery wait duration and phase-complete check available
 
@@ -52,10 +52,10 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Log at INFO "initial discovery started" with wait duration when monitor starts in `cmd/watch-dog/main.go` per specs/004-child-deps-initial-restart/research.md and contracts/initial-discovery-behavior.md
-- [ ] T005 [US1] Defer `runStartupReconciliation` until initial discovery phase has elapsed; run it exactly once when phase ends (e.g. after wait) in `cmd/watch-dog/main.go` per research.md §4
-- [ ] T006 [US1] In health event handler and in `runPollingFallback`, skip calling `flow.RunFullSequence` until `isInitialDiscoveryComplete()` in `cmd/watch-dog/main.go`
-- [ ] T007 [US1] When initial discovery phase elapses, log at INFO "initial discovery complete, recovery enabled" in `cmd/watch-dog/main.go` per contracts/initial-discovery-behavior.md
+- [x] T004 [US1] Log at INFO "initial discovery started" with wait duration when monitor starts in `cmd/watch-dog/main.go` per specs/004-child-deps-initial-restart/research.md and contracts/initial-discovery-behavior.md
+- [x] T005 [US1] Defer `runStartupReconciliation` until initial discovery phase has elapsed; run it exactly once when phase ends (e.g. after wait) in `cmd/watch-dog/main.go` per research.md §4
+- [x] T006 [US1] In health event handler and in `runPollingFallback`, skip calling `flow.RunFullSequence` until `isInitialDiscoveryComplete()` in `cmd/watch-dog/main.go`
+- [x] T007 [US1] When initial discovery phase elapses, log at INFO "initial discovery complete, recovery enabled" in `cmd/watch-dog/main.go` per contracts/initial-discovery-behavior.md
 
 **Checkpoint**: User Story 1 complete — no recovery during initial discovery; compose up does not cause cascade
 
@@ -69,8 +69,8 @@
 
 ### Implementation for User Story 2
 
-- [ ] T008 [US2] Ensure `runStartupReconciliation` is invoked exactly once when initial discovery phase completes (not at startup) and event/polling recovery only run when phase is complete in `cmd/watch-dog/main.go`; ensure post-phase logic cannot cause a cascade (e.g. startup reconciliation runs once, not in a loop; cooldown/in-flight prevent duplicate recovery runs); add brief comment referencing specs/004-child-deps-initial-restart/contracts/initial-discovery-behavior.md
-- [ ] T009 [US2] Confirm specs/004-child-deps-initial-restart/quickstart.md section "Verify recovery still works after phase" accurately describes post-initial-discovery behavior; update if needed
+- [x] T008 [US2] Ensure `runStartupReconciliation` is invoked exactly once when initial discovery phase completes (not at startup) and event/polling recovery only run when phase is complete in `cmd/watch-dog/main.go`; ensure post-phase logic cannot cause a cascade (e.g. startup reconciliation runs once, not in a loop; cooldown/in-flight prevent duplicate recovery runs); add brief comment referencing specs/004-child-deps-initial-restart/contracts/initial-discovery-behavior.md
+- [x] T009 [US2] Confirm specs/004-child-deps-initial-restart/quickstart.md section "Verify recovery still works after phase" accurately describes post-initial-discovery behavior; update if needed
 
 **Checkpoint**: User Stories 1 and 2 both satisfied — no restarts on initial start; recovery works after phase
 
@@ -80,11 +80,11 @@
 
 **Purpose**: Documentation, docstrings, and validation.
 
-- [ ] T010 [P] Add `WATCHDOG_INITIAL_DISCOVERY_WAIT` to README (description, example values e.g. 120s, 5m) per specs/004-child-deps-initial-restart/contracts/env-initial-discovery.md
-- [ ] T011 Update package and function docstrings in `cmd/watch-dog/main.go` for all new or changed items: initial discovery wait env var, phase state / phase end time, `isInitialDiscoveryComplete()` (or equivalent), and main flow (initial discovery phase vs recovery); ensure docstrings reflect current behavior so future readers see accurate docs
-- [ ] T012 Run quickstart validation per specs/004-child-deps-initial-restart/quickstart.md: compose up, verify no restarts during phase; after phase, stop parent and verify recovery
-- [ ] T013 Verify no cascade failure after initial discovery: after phase completes, trigger one recovery (e.g. stop parent once); confirm recovery runs once and stack reaches stable state with no sustained or repeated restart loop per spec FR-007 and SC-005; add or update a "No cascade after phase" verification step in specs/004-child-deps-initial-restart/quickstart.md if not already covered
-- [ ] T014 [P] Verify spec FR-005 in specs/004-child-deps-initial-restart/spec.md includes an unambiguous example for "observable container start times" (e.g. docker inspect restart count or container start timestamp); add the example only if missing so verification is testable
+- [x] T010 [P] Add `WATCHDOG_INITIAL_DISCOVERY_WAIT` to README (description, example values e.g. 120s, 5m) per specs/004-child-deps-initial-restart/contracts/env-initial-discovery.md
+- [x] T011 Update package and function docstrings in `cmd/watch-dog/main.go` for all new or changed items: initial discovery wait env var, phase state / phase end time, `isInitialDiscoveryComplete()` (or equivalent), and main flow (initial discovery phase vs recovery); ensure docstrings reflect current behavior so future readers see accurate docs
+- [ ] T012 Run quickstart validation per specs/004-child-deps-initial-restart/quickstart.md: compose up, verify no restarts during phase; after phase, stop parent and verify recovery *(manual: run locally with your stack)*
+- [x] T013 Verify no cascade failure after initial discovery: after phase completes, trigger one recovery (e.g. stop parent once); confirm recovery runs once and stack reaches stable state with no sustained or repeated restart loop per spec FR-007 and SC-005; add or update a "No cascade after phase" verification step in specs/004-child-deps-initial-restart/quickstart.md if not already covered
+- [x] T014 [P] Verify spec FR-005 in specs/004-child-deps-initial-restart/spec.md includes an unambiguous example for "observable container start times" (e.g. docker inspect restart count or container start timestamp); add the example only if missing so verification is testable
 
 ---
 

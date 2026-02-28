@@ -1,6 +1,8 @@
 // Package main is the watch-dog entrypoint: it monitors container health via Docker
 // events, discovers parent/dependent relationships from the compose file, and runs
 // recovery (restart parent, wait until healthy, then restart dependents).
+// During an initial discovery phase after startup (first discovery + WATCHDOG_INITIAL_DISCOVERY_WAIT),
+// no recovery or dependent restarts run; see specs/004-child-deps-initial-restart/contracts/initial-discovery-behavior.md.
 package main
 
 import (
@@ -17,25 +19,51 @@ import (
 )
 
 var recoveryCooldown time.Duration
+var initialDiscoveryWait time.Duration
+
+// initialDiscoveryPhaseEnd is set after first discovery; recovery is gated until time.Now() > initialDiscoveryPhaseEnd.
+var initialDiscoveryPhaseEnd time.Time
 
 func init() {
 	const defaultCooldown = 2 * time.Minute
 	s := os.Getenv("RECOVERY_COOLDOWN")
 	if s == "" {
 		recoveryCooldown = defaultCooldown
-		return
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d <= 0 {
-		reason := "must be positive"
-		if err != nil {
-			reason = err.Error()
+	} else {
+		d, err := time.ParseDuration(s)
+		if err != nil || d <= 0 {
+			reason := "must be positive"
+			if err != nil {
+				reason = err.Error()
+			}
+			docker.LogWarn("invalid RECOVERY_COOLDOWN, using default 2m", "value", s, "error", reason)
+			d = defaultCooldown
 		}
-		docker.LogWarn("invalid RECOVERY_COOLDOWN, using default 2m", "value", s, "error", reason)
-		recoveryCooldown = defaultCooldown
-		return
+		recoveryCooldown = d
 	}
-	recoveryCooldown = d
+
+	const defaultInitialDiscoveryWait = 60 * time.Second
+	ws := os.Getenv("WATCHDOG_INITIAL_DISCOVERY_WAIT")
+	if ws == "" {
+		initialDiscoveryWait = defaultInitialDiscoveryWait
+	} else {
+		d, err := time.ParseDuration(ws)
+		if err != nil || d <= 0 {
+			reason := "must be positive"
+			if err != nil {
+				reason = err.Error()
+			}
+			docker.LogWarn("invalid WATCHDOG_INITIAL_DISCOVERY_WAIT, using default 60s", "value", ws, "error", reason)
+			d = defaultInitialDiscoveryWait
+		}
+		initialDiscoveryWait = d
+	}
+}
+
+// isInitialDiscoveryComplete returns true after the initial discovery phase (first discovery + wait) has elapsed.
+// Until then, recovery and runStartupReconciliation must not run; see contracts/initial-discovery-behavior.md.
+func isInitialDiscoveryComplete() bool {
+	return !initialDiscoveryPhaseEnd.IsZero() && time.Now().After(initialDiscoveryPhaseEnd)
 }
 
 // recoveryCooldownState tracks last recovery time and in-flight recovery per parent
@@ -79,9 +107,10 @@ func (s *recoveryCooldownState) EndRecovery(parentName string) {
 }
 
 // main initializes logging from env, creates the Docker client, builds parent-to-dependents
-// discovery from the compose file, subscribes to health-status events, runs startup
-// reconciliation and a polling fallback, and executes recovery (restart parent then
-// dependents) when a parent becomes unhealthy.
+// discovery from the compose file, and runs an initial discovery phase (no recovery until
+// phase end). After the phase, it runs startup reconciliation once and subscribes to
+// health-status events and polling, executing recovery when a parent becomes unhealthy.
+// See contracts/initial-discovery-behavior.md.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -99,6 +128,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initial discovery phase: no recovery until first discovery + wait has elapsed (specs/004-child-deps-initial-restart).
+	initialDiscoveryPhaseEnd = time.Now().Add(initialDiscoveryWait)
+	docker.LogInfo("initial discovery started", "wait", initialDiscoveryWait.String())
+
 	flow := &recovery.Flow{Client: cli}
 	cooldown := &recoveryCooldownState{}
 	selfName := os.Getenv("WATCHDOG_CONTAINER_NAME")
@@ -106,7 +139,6 @@ func main() {
 		docker.LogWarn("WATCHDOG_CONTAINER_NAME not set: self-last-restart behavior disabled")
 	}
 
-	// Log startup and discovered parents so there is always visible output (e.g. docker logs watch-dog).
 	parentNames := parentToDeps.ParentNames()
 	if len(parentNames) == 0 {
 		docker.LogWarn("no parents discovered; set WATCHDOG_COMPOSE_PATH and mount the compose file", "path", discovery.ComposePathFromEnv())
@@ -114,13 +146,22 @@ func main() {
 		docker.LogInfo("watch-dog started", "parents", parentNames)
 	}
 
-	// Startup reconciliation: treat already-unhealthy or stopped parents (per contracts/recovery-behavior.md).
-	runStartupReconciliation(ctx, cli, &parentToDeps, flow, cooldown, selfName)
+	// Run startup reconciliation exactly once when initial discovery phase ends (not at startup).
+	// Post-phase: no cascade—reconciliation runs once; cooldown/in-flight prevent duplicate runs (contracts/initial-discovery-behavior.md).
+	go func() {
+		time.Sleep(initialDiscoveryWait)
+		docker.LogInfo("initial discovery complete, recovery enabled")
+		parentToDeps, err := discovery.BuildParentToDependents(ctx, cli)
+		if err != nil {
+			docker.LogError("startup reconciliation: build discovery", "error", err)
+			return
+		}
+		runStartupReconciliation(ctx, cli, &parentToDeps, flow, cooldown, selfName)
+	}()
 
 	healthCh := make(chan docker.HealthEvent, 8)
 	cli.SubscribeHealthStatus(ctx, healthCh)
 
-	// Optional polling fallback (e.g. every 60s) to catch missed events
 	go runPollingFallback(ctx, cli, flow, cooldown, selfName)
 
 	for {
@@ -130,6 +171,9 @@ func main() {
 		case ev, ok := <-healthCh:
 			if !ok {
 				return
+			}
+			if !isInitialDiscoveryComplete() {
+				continue
 			}
 			parentToDeps, err = discovery.BuildParentToDependents(ctx, cli)
 			if err != nil {
@@ -208,6 +252,7 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 const pollInterval = 60 * time.Second
 
 // runPollingFallback periodically rechecks parent health and triggers recovery if unhealthy.
+// Recovery runs only after initial discovery phase is complete; see isInitialDiscoveryComplete().
 func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.Flow, cooldown *recoveryCooldownState, selfName string) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -216,6 +261,9 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !isInitialDiscoveryComplete() {
+				continue
+			}
 			parentToDeps, err := discovery.BuildParentToDependents(ctx, cli)
 			if err != nil {
 				continue

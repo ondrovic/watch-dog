@@ -44,6 +44,11 @@ Examples: `30s`, `2m`, `5m`. If unset, default is **60s**. Invalid values fall b
 
 3. **Expected**: Monitor runs full recovery (restart parent → wait healthy → restart dependents one at a time, per 003). Logs show "parent needs recovery" and "restarted dependent" as before.
 
+## Verify no cascade after phase
+
+1. **Setup**: After initial discovery is complete (see logs), trigger **one** recovery (e.g. `docker stop <parent>` once).
+2. **Expected**: Recovery runs once; the stack reaches a stable state. No sustained or repeated restart loop (no restarts that repeatedly re-trigger). You can confirm by checking that container restarts settle (e.g. one recovery cycle, then idle).
+
 ## Optional: watch-dog as dependent (depends_on)
 
 You can keep watch-dog as a dependent of the parent in compose. With this feature and an appropriate `WATCHDOG_INITIAL_DISCOVERY_WAIT`, `docker compose up` should not cause a cascade; the monitor will not restart itself or other dependents during initial discovery.
