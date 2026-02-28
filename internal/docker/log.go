@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,7 @@ func levelFromEnv() slog.Level {
 type compactHandlerStruct struct {
 	opts   *slog.HandlerOptions
 	w      io.Writer
+	mu     *sync.Mutex
 	attrs  []slog.Attr
 	groups []string
 }
@@ -55,7 +57,7 @@ func newCompactHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
-	return &compactHandlerStruct{opts: opts, w: w}
+	return &compactHandlerStruct{opts: opts, w: w, mu: &sync.Mutex{}}
 }
 
 func (h *compactHandlerStruct) Enabled(_ context.Context, level slog.Level) bool {
@@ -64,6 +66,42 @@ func (h *compactHandlerStruct) Enabled(_ context.Context, level slog.Level) bool
 		min = h.opts.Level.Level()
 	}
 	return level >= min
+}
+
+// processAttr resolves a.Value (honoring LogValuer) and applies ReplaceAttr from
+// HandlerOptions when non-nil, then resolves again. It does not apply ReplaceAttr
+// to group attrs; the caller expands groups and processes sub-attrs separately.
+func processAttr(groups []string, a slog.Attr, replaceAttr func([]string, slog.Attr) slog.Attr) slog.Attr {
+	a.Value = a.Value.Resolve()
+	if replaceAttr != nil && a.Value.Kind() != slog.KindGroup {
+		a = replaceAttr(groups, a)
+		a.Value = a.Value.Resolve()
+	}
+	return a
+}
+
+// appendProcessedAttrs appends each attr after resolving and applying replaceAttr,
+// expands groups recursively, and skips attrs with empty key (discarded by ReplaceAttr).
+func appendProcessedAttrs(buf []byte, prefix string, groups []string, attrs []slog.Attr, replaceAttr func([]string, slog.Attr) slog.Attr) []byte {
+	for _, a := range attrs {
+		a = processAttr(groups, a, replaceAttr)
+		if a.Key == "" {
+			continue
+		}
+		if a.Value.Kind() == slog.KindGroup {
+			childPrefix := prefix
+			if a.Key != "" {
+				childPrefix = prefix + a.Key + "."
+			}
+			childGroups := make([]string, len(groups), len(groups)+1)
+			copy(childGroups, groups)
+			childGroups = append(childGroups, a.Key)
+			buf = appendProcessedAttrs(buf, childPrefix, childGroups, a.Value.Group(), replaceAttr)
+		} else {
+			buf = appendAttr(buf, prefix, a)
+		}
+	}
+	return buf
 }
 
 func appendAttr(buf []byte, prefix string, a slog.Attr) []byte {
@@ -88,14 +126,18 @@ func (h *compactHandlerStruct) Handle(_ context.Context, r slog.Record) error {
 	if prefix != "" {
 		prefix += "."
 	}
-	for _, a := range h.attrs {
-		buf = appendAttr(buf, prefix, a)
+	var replaceAttr func([]string, slog.Attr) slog.Attr
+	if h.opts != nil && h.opts.ReplaceAttr != nil {
+		replaceAttr = h.opts.ReplaceAttr
 	}
+	buf = appendProcessedAttrs(buf, prefix, h.groups, h.attrs, replaceAttr)
 	r.Attrs(func(a slog.Attr) bool {
-		buf = appendAttr(buf, prefix, a)
+		buf = appendProcessedAttrs(buf, prefix, h.groups, []slog.Attr{a}, replaceAttr)
 		return true
 	})
 	buf = append(buf, '\n')
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	_, err := h.w.Write(buf)
 	return err
 }
@@ -126,6 +168,7 @@ func (h *compactHandlerStruct) WithGroup(name string) slog.Handler {
 type timestampHandlerStruct struct {
 	opts   *slog.HandlerOptions
 	w      io.Writer
+	mu     *sync.Mutex
 	attrs  []slog.Attr
 	groups []string
 }
@@ -134,7 +177,7 @@ func newTimestampHandler(w io.Writer, opts *slog.HandlerOptions) slog.Handler {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
-	return &timestampHandlerStruct{opts: opts, w: w}
+	return &timestampHandlerStruct{opts: opts, w: w, mu: &sync.Mutex{}}
 }
 
 func (h *timestampHandlerStruct) Enabled(_ context.Context, level slog.Level) bool {
@@ -156,14 +199,18 @@ func (h *timestampHandlerStruct) Handle(_ context.Context, r slog.Record) error 
 	if prefix != "" {
 		prefix += "."
 	}
-	for _, a := range h.attrs {
-		buf = appendAttr(buf, prefix, a)
+	var replaceAttr func([]string, slog.Attr) slog.Attr
+	if h.opts != nil && h.opts.ReplaceAttr != nil {
+		replaceAttr = h.opts.ReplaceAttr
 	}
+	buf = appendProcessedAttrs(buf, prefix, h.groups, h.attrs, replaceAttr)
 	r.Attrs(func(a slog.Attr) bool {
-		buf = appendAttr(buf, prefix, a)
+		buf = appendProcessedAttrs(buf, prefix, h.groups, []slog.Attr{a}, replaceAttr)
 		return true
 	})
 	buf = append(buf, '\n')
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	_, err := h.w.Write(buf)
 	return err
 }

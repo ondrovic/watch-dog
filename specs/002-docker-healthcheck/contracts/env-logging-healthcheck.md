@@ -25,7 +25,7 @@ Used in the compose `healthcheck:` block with variable substitution (e.g. `inter
 | DOCKER_HEALTHCHECK_TIMEOUT       | 10s       | Max time for one check. |
 | DOCKER_HEALTHCHECK_RETRIES       | 2         | Consecutive failures before unhealthy. |
 
-**Note**: Timing parameters (INTERVAL, START_PERIOD, TIMEOUT) must use duration strings with units (e.g., `15s`, `1m30s`), not raw numbers.
+- The Dockerfile HEALTHCHECK uses fixed defaults (same duration values); Compose overrides when these variables are set in .env or environment.
 
 - The Dockerfile HEALTHCHECK uses fixed defaults (same numeric values); Compose overrides when these variables are set in .env or environment.
 - README and quickstart MUST show a compose example that uses these variables (no hardcoded values in the example).
