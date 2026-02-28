@@ -1,0 +1,35 @@
+---
+description: Project Development Guidelines
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# watch-dog Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2026-02-28
+
+## Active Technologies
+
+- Go 1.21+ + Docker Engine API (e.g. github.com/docker/docker/client), standard library (001-container-health-monitor)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+# Add commands for Go 1.21+
+
+## Code Style
+
+Go 1.21+: Follow standard conventions
+
+## Recent Changes
+
+- 001-container-health-monitor: Added Go 1.21+ + Docker Engine API (e.g. github.com/docker/docker/client), standard library
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->

@@ -1,0 +1,10 @@
+.git
+.github
+specs
+.specify
+.cursor
+example
+*.md
+.gitignore
+.env
+.env.*
