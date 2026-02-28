@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,6 +15,44 @@ import (
 	"watch-dog/internal/docker"
 	"watch-dog/internal/recovery"
 )
+
+var recoveryCooldown time.Duration
+
+func init() {
+	const defaultCooldown = 2 * time.Minute
+	s := os.Getenv("RECOVERY_COOLDOWN")
+	if s == "" {
+		recoveryCooldown = defaultCooldown
+		return
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		docker.LogWarn("invalid RECOVERY_COOLDOWN, using default 2m", "value", s, "error", err)
+		recoveryCooldown = defaultCooldown
+		return
+	}
+	recoveryCooldown = d
+}
+
+// recoveryCooldownState tracks last recovery time per parent to avoid re-running recovery
+// for the same parent on duplicate events (stop + die) or events from our own restarts.
+type recoveryCooldownState struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (s *recoveryCooldownState) allow(parentName string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil {
+		s.last = make(map[string]time.Time)
+	}
+	if t, ok := s.last[parentName]; ok && time.Since(t) < recoveryCooldown {
+		return false
+	}
+	s.last[parentName] = time.Now()
+	return true
+}
 
 // main initializes logging from env, creates the Docker client, builds parent-to-dependents
 // discovery from the compose file, subscribes to health-status events, runs startup
@@ -37,6 +76,7 @@ func main() {
 	}
 
 	flow := &recovery.Flow{Client: cli}
+	cooldown := &recoveryCooldownState{}
 	selfName := os.Getenv("WATCHDOG_CONTAINER_NAME")
 	if selfName == "" {
 		docker.LogWarn("WATCHDOG_CONTAINER_NAME not set: self-last-restart behavior disabled")
@@ -51,13 +91,13 @@ func main() {
 	}
 
 	// Startup reconciliation: treat already-unhealthy or stopped parents (per contracts/recovery-behavior.md).
-	runStartupReconciliation(ctx, cli, &parentToDeps, flow, selfName)
+	runStartupReconciliation(ctx, cli, &parentToDeps, flow, cooldown, selfName)
 
 	healthCh := make(chan docker.HealthEvent, 8)
 	cli.SubscribeHealthStatus(ctx, healthCh)
 
 	// Optional polling fallback (e.g. every 60s) to catch missed events
-	go runPollingFallback(ctx, cli, flow, selfName)
+	go runPollingFallback(ctx, cli, flow, cooldown, selfName)
 
 	for {
 		select {
@@ -75,6 +115,10 @@ func main() {
 			if !parentToDeps.IsParent(ev.ContainerName) {
 				continue
 			}
+			if !cooldown.allow(ev.ContainerName) {
+				docker.LogDebug("skipping recovery, in cooldown", "parent", ev.ContainerName)
+				continue
+			}
 			docker.LogInfo("parent needs recovery", "parent", ev.ContainerName, "id", ev.ContainerID, "reason", ev.Status)
 			flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName, &parentToDeps, selfName)
 		}
@@ -82,7 +126,7 @@ func main() {
 }
 
 // runStartupReconciliation finds parents that are already unhealthy or stopped and runs full recovery.
-func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discovery.ParentToDependents, flow *recovery.Flow, selfName string) {
+func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discovery.ParentToDependents, flow *recovery.Flow, cooldown *recoveryCooldownState, selfName string) {
 	containers, err := cli.ListContainers(ctx, true)
 	if err != nil {
 		docker.LogError("startup list containers", "error", err)
@@ -102,7 +146,11 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		state := nameToState[parentName]
 		if state != "running" {
 			docker.LogInfo("startup: parent not running", "parent", parentName, "state", state)
-			flow.RunFullSequence(ctx, id, parentName, m, selfName)
+			if cooldown.allow(parentName) {
+				flow.RunFullSequence(ctx, id, parentName, m, selfName)
+			} else {
+				docker.LogDebug("startup: skipping recovery, in cooldown", "parent", parentName)
+			}
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
@@ -110,14 +158,18 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 			continue
 		}
 		docker.LogInfo("startup: parent already unhealthy", "parent", parentName)
-		flow.RunFullSequence(ctx, id, parentName, m, selfName)
+		if cooldown.allow(parentName) {
+			flow.RunFullSequence(ctx, id, parentName, m, selfName)
+		} else {
+			docker.LogDebug("startup: skipping recovery, in cooldown", "parent", parentName)
+		}
 	}
 }
 
 const pollInterval = 60 * time.Second
 
 // runPollingFallback periodically rechecks parent health and triggers recovery if unhealthy.
-func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.Flow, selfName string) {
+func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.Flow, cooldown *recoveryCooldownState, selfName string) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
@@ -147,7 +199,9 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				state := nameToState[parentName]
 				if state != "running" {
 					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
-					flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
+					if cooldown.allow(parentName) {
+						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
+					}
 					continue
 				}
 				health, _, err := cli.Inspect(ctx, id)
@@ -157,7 +211,11 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				}
 				if health == "unhealthy" {
 					docker.LogInfo("polling: unhealthy parent", "parent", parentName)
-					flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
+					if cooldown.allow(parentName) {
+						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
+					} else {
+						docker.LogDebug("polling: skipping recovery, in cooldown", "parent", parentName, "reason", "cooldown denied")
+					}
 				}
 			}
 		}
