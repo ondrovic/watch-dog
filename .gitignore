@@ -1,7 +1,7 @@
 # Go
 vendor/
 *.exe
-watch-dog
+/watch-dog
 *.test
 coverage.out
 go.work

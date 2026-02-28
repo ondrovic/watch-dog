@@ -1,0 +1,128 @@
+package main
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"watch-dog/internal/discovery"
+	"watch-dog/internal/docker"
+	"watch-dog/internal/recovery"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	cli, err := docker.NewClient(ctx)
+	if err != nil {
+		docker.LogError("create docker client", "error", err)
+		os.Exit(1)
+	}
+	defer cli.Close()
+
+	parentToDeps, err := discovery.BuildParentToDependents(ctx, cli)
+	if err != nil {
+		docker.LogError("build discovery", "error", err)
+		os.Exit(1)
+	}
+
+	flow := &recovery.Flow{Client: cli, Discovery: &parentToDeps}
+
+	// Startup reconciliation: treat already-unhealthy parents (per contracts/recovery-behavior.md)
+	runStartupReconciliation(ctx, cli, &parentToDeps, flow)
+
+	healthCh := make(chan docker.HealthEvent, 8)
+	cli.SubscribeHealthStatus(ctx, healthCh)
+
+	// Optional polling fallback (e.g. every 60s) to catch missed events
+	go runPollingFallback(ctx, cli, flow)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-healthCh:
+			if !ok {
+				return
+			}
+			parentToDeps, err = discovery.BuildParentToDependents(ctx, cli)
+			if err != nil {
+				docker.LogError("refresh discovery", "error", err)
+				continue
+			}
+			flow.Discovery = &parentToDeps
+			if !parentToDeps.IsParent(ev.ContainerName) {
+				continue
+			}
+			docker.LogInfo("unhealthy parent detected", "parent", ev.ContainerName, "id", ev.ContainerID)
+			flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName)
+		}
+	}
+}
+
+// runStartupReconciliation finds parents that are already unhealthy and runs full recovery.
+func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discovery.ParentToDependents, flow *recovery.Flow) {
+	containers, err := cli.ListContainers(ctx)
+	if err != nil {
+		docker.LogError("startup list containers", "error", err)
+		return
+	}
+	nameToID := make(map[string]string)
+	for _, c := range containers {
+		nameToID[c.Name] = c.ID
+	}
+	for parentName := range *m {
+		id, ok := nameToID[parentName]
+		if !ok {
+			continue
+		}
+		health, _, err := cli.Inspect(ctx, id)
+		if err != nil || health != "unhealthy" {
+			continue
+		}
+		docker.LogInfo("startup: parent already unhealthy", "parent", parentName)
+		flow.RunFullSequence(ctx, id, parentName)
+	}
+}
+
+const pollInterval = 60 * time.Second
+
+// runPollingFallback periodically rechecks parent health and triggers recovery if unhealthy.
+func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.Flow) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			parentToDeps, err := discovery.BuildParentToDependents(ctx, cli)
+			if err != nil {
+				continue
+			}
+			flow.Discovery = &parentToDeps
+			containers, err := cli.ListContainers(ctx)
+			if err != nil {
+				continue
+			}
+			nameToID := make(map[string]string)
+			for _, c := range containers {
+				nameToID[c.Name] = c.ID
+			}
+			for parentName := range parentToDeps {
+				id, ok := nameToID[parentName]
+				if !ok {
+					continue
+				}
+				health, _, _ := cli.Inspect(ctx, id)
+				if health == "unhealthy" {
+					docker.LogInfo("polling: unhealthy parent", "parent", parentName)
+					flow.RunFullSequence(ctx, id, parentName)
+				}
+			}
+		}
+	}
+}
