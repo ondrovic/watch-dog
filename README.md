@@ -88,6 +88,7 @@ Use a `.env` file or export these variables so Compose can substitute them (e.g.
 |----------|-------------|
 | `WATCHDOG_COMPOSE_PATH` | Path inside the container to the compose file (e.g. `/app/docker-compose.yml`). |
 | `COMPOSE_FILE` | Alternative; if set, the first path in a colon-separated list is used. |
+| `WATCHDOG_CONTAINER_NAME` | Optional. When the monitor is a dependent of a recovered parent (e.g. in `depends_on`), set this to the monitor’s container name (e.g. `watch-dog`). The monitor will restart **all other** dependents first, then itself last, so in-flight restarts are not canceled. If unset, dependents are restarted in deterministic (e.g. alphabetical) order with no special handling for the monitor. |
 
 #### Logging: LOG_LEVEL and LOG_FORMAT
 
