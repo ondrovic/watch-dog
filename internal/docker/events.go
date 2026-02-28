@@ -1,3 +1,5 @@
+// Package docker provides a Docker API client for listing containers, inspecting
+// health status, and restarting containers, plus logging and health-status event subscription.
 package docker
 
 import (
@@ -9,9 +11,12 @@ import (
 
 // HealthEvent is emitted when a container's health status changes.
 type HealthEvent struct {
-	ContainerID   string
+	// ContainerID is the container ID.
+	ContainerID string
+	// ContainerName is the container name.
 	ContainerName string
-	Status        string // "health_status: unhealthy" etc.
+	// Status is the event action (e.g. "health_status: unhealthy").
+	Status string
 }
 
 // SubscribeHealthStatus subscribes to Docker container events: health_status (unhealthy), die, and stop.
