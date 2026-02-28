@@ -4,6 +4,7 @@ package recovery
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"watch-dog/internal/discovery"
@@ -51,17 +52,33 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 	}
 }
 
-// RestartDependents restarts all containers that list parentName in depends_on.
+// RestartDependents restarts all containers that list parentName in depends_on,
+// one at a time in deterministic order (sorted by name). If selfName is non-empty
+// and present in the list, it is restarted last so in-flight operations are not canceled.
 // discovery may be nil; then no dependents are restarted.
-func (f *Flow) RestartDependents(ctx context.Context, parentName string, discovery *discovery.ParentToDependents) {
+func (f *Flow) RestartDependents(ctx context.Context, parentName string, discovery *discovery.ParentToDependents, selfName string) {
 	if discovery == nil {
 		docker.LogDebug("no discovery available, skipping restart of dependents", "parentName", parentName)
 		return
 	}
 	deps := discovery.GetDependents(parentName)
+	if len(deps) == 0 {
+		return
+	}
+	// Deterministic order: sort by name.
+	sort.Strings(deps)
+	// If self is in the list, move it to last so we don't cancel in-flight restarts.
+	if selfName != "" {
+		for i, name := range deps {
+			if name == selfName {
+				deps = append(deps[:i], append(deps[i+1:], name)...)
+				break
+			}
+		}
+	}
 	for _, name := range deps {
 		if err := f.Client.Restart(ctx, name); err != nil {
-			docker.LogError("restart dependent", "dependent", name, "error", err)
+			docker.LogError("restart dependent", "dependent", name, "parent", parentName, "error", err)
 		} else {
 			docker.LogInfo("restarted dependent", "dependent", name, "parent", parentName)
 		}
@@ -70,7 +87,8 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 
 // RunFullSequence restarts the parent, waits until healthy, then restarts dependents.
 // If wait-for-healthy times out, dependents are not restarted.
-func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName string, discovery *discovery.ParentToDependents) {
+// selfName is optional; when set and present in the dependent list, that container is restarted last.
+func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName string, discovery *discovery.ParentToDependents, selfName string) {
 	if err := f.RestartParent(ctx, parentID); err != nil {
 		docker.LogError("restart parent", "parent", parentName, "error", err)
 		return
@@ -80,5 +98,5 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName string,
 		docker.LogWarn("parent did not become healthy in time; not restarting dependents", "parent", parentName)
 		return
 	}
-	f.RestartDependents(ctx, parentName, discovery)
+	f.RestartDependents(ctx, parentName, discovery, selfName)
 }

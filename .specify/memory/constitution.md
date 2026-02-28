@@ -1,32 +1,21 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# watch-dog Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Contract-first behavior
+Observable behavior is defined in `specs/<feature>/contracts/` (e.g. recovery-behavior, depends_on, healthcheck). Code and docs must align with contracts; contract changes require spec/plan updates.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Spec-branch workflow
+Feature work happens on spec branches (e.g. `001-container-health-monitor`, `003-fix-children-handling`). The active spec directory is resolved from the current branch (or `SPECIFY_FEATURE`). Do not assume a branch; verify or prompt if unclear.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Recovery order
+Parent-first, then dependents: restart parent → wait until healthy → restart dependents (one at a time per spec 003). No restart of dependents until parent is healthy; behavior matches contracts/recovery-behavior.md.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Observability
+Structured logging via log/slog; LOG_LEVEL and LOG_FORMAT from env (see contracts/env-logging-healthcheck). All significant actions (discovery, recovery, errors) are logged so operators can verify behavior.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Simplicity and scope
+Single binary, no persistent config; discovery is fully from the compose file and runtime. No features outside the spec (e.g. no port checks, no editing user files). YAGNI.
 
 ## Workflow Rules
 
@@ -37,23 +26,18 @@
 ### No automated commits
 - Never run `git commit` or create commits. The agent may stage files (`git add`) or suggest commit messages, but committing is left to the user.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Technology and Constraints
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+- **Stack**: Go 1.21+, Docker Engine API (github.com/docker/docker/client), standard library, log/slog. See `.cursor/rules/specify-rules.mdc` for current "Active Technologies". Canonical layout: `cmd/watch-dog/` (single binary), `internal/` (docker, discovery, recovery); specify-rules may show generic `src/`, `tests/` — the repo uses `cmd/` and `internal/` and test files alongside packages (e.g. `internal/discovery/labels_test.go`).
+- **Deliverable**: Single container image; build and publish via GitHub (e.g. GHCR). No modification of files outside the project repository.
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## Development and Quality
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+- **Contracts**: New or changed behavior must be reflected in the appropriate spec's `contracts/`. Implementation and README/quickstart must match contracts.
+- **Testing**: Contract-driven; integration tests for recovery behavior and discovery when added. Existing unit test: `internal/discovery/labels_test.go`; extend tests when touching contracts (per tasks.md and speckit commands).
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes ad-hoc practices for watch-dog. PRs and reviews should verify compliance with contracts and recovery order. Amendments: document change, update this file and version/date; keep ratification/last-amended footer.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-02-28 | **Last Amended**: 2026-02-28
