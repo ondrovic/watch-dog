@@ -101,8 +101,9 @@ description: "Task list for Container Health Monitor (Watch-Dog) implementation"
 - [x] T018 [US4] Add Dockerfile at repository root: multi-stage build (build Go binary, then minimal runtime image e.g. scratch or distroless); CMD runs watch-dog binary; no host mounts required at build time
 - [x] T019 [US4] Add .github/workflows/build-push.yml: trigger on push to main (and optionally tags); checkout repo; login to ghcr.io; build and push image (e.g. ghcr.io/<owner>/watch-dog:latest); use docker/build-push-action with registry ghcr.io
 - [x] T020 [US4] Update specs/001-container-health-monitor/quickstart.md with final image name (ghcr.io/<owner>/watch-dog), run example (docker run -v /var/run/docker.sock:/var/run/docker.sock), and compose snippet; do not duplicate project overview here (that is T024)
+- [x] T033 [US4] Ensure multi-platform image in .github/workflows/build-push.yml: set `platforms: linux/amd64,linux/arm64` on docker/build-push-action so the image has manifests for Intel/AMD and Apple Silicon (arm64); avoids "no matching manifest for linux/arm64" when pulling on macOS Silicon
 
-**Checkpoint**: Image builds and pushes to GHCR on repo push; users can pull and run
+**Checkpoint**: Image builds and pushes to GHCR on repo push; users can pull and run on amd64 and arm64 (including macOS Silicon)
 
 ---
 
@@ -254,11 +255,11 @@ description: "Task list for Container Health Monitor (Watch-Dog) implementation"
 | Phase 3 US3        | T008–T010  | 3     |
 | Phase 4 US1        | T011–T014  | 4     |
 | Phase 5 US2        | T015–T017  | 3     |
-| Phase 6 US4        | T018–T020  | 3     |
+| Phase 6 US4        | T018–T020, T033 | 4     |
 | Phase 7 Polish     | T021–T024  | 4     |
 | Phase 8 Refactor   | T025–T029  | 5     |
 | Phase 9 README     | T030–T032  | 3     |
-| **Total**          |            | **32**|
+| **Total**          |            | **33**|
 
 ---
 
