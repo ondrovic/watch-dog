@@ -16,7 +16,7 @@ func ComposePathFromEnv() string {
 		return p
 	}
 	if p := os.Getenv("COMPOSE_FILE"); p != "" {
-		if idx := strings.Index(p, ":"); idx > 0 {
+		if idx := strings.Index(p, ":"); idx >= 0 {
 			return p[:idx]
 		}
 		return p

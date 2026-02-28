@@ -12,8 +12,7 @@ const defaultWaitHealthyTimeout = 5 * time.Minute
 
 // Flow runs the full recovery sequence: restart parent, wait until healthy, restart dependents.
 type Flow struct {
-	Client   *docker.Client
-	Discovery *discovery.ParentToDependents
+	Client *docker.Client
 }
 
 // RestartParent restarts the container by ID or name (idempotent).
@@ -51,8 +50,12 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 }
 
 // RestartDependents restarts all containers that list parentName in depends_on.
-func (f *Flow) RestartDependents(ctx context.Context, parentName string) {
-	deps := f.Discovery.GetDependents(parentName)
+// discovery may be nil; then no dependents are restarted.
+func (f *Flow) RestartDependents(ctx context.Context, parentName string, discovery *discovery.ParentToDependents) {
+	if discovery == nil {
+		return
+	}
+	deps := discovery.GetDependents(parentName)
 	for _, name := range deps {
 		if err := f.Client.Restart(ctx, name); err != nil {
 			docker.LogError("restart dependent", "dependent", name, "error", err)
@@ -64,7 +67,7 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string) {
 
 // RunFullSequence restarts the parent, waits until healthy, then restarts dependents.
 // If wait-for-healthy times out, dependents are not restarted.
-func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName string) {
+func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName string, discovery *discovery.ParentToDependents) {
 	if err := f.RestartParent(ctx, parentID); err != nil {
 		docker.LogError("restart parent", "parent", parentName, "error", err)
 		return
@@ -74,5 +77,5 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName string)
 		docker.LogWarn("parent did not become healthy in time; not restarting dependents", "parent", parentName)
 		return
 	}
-	f.RestartDependents(ctx, parentName)
+	f.RestartDependents(ctx, parentName, discovery)
 }

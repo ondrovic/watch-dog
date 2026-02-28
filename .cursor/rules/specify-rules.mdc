@@ -9,6 +9,7 @@ alwaysApply: true
 Auto-generated from all feature plans. Last updated: 2026-02-28
 
 ## Active Technologies
+- Go 1.21+ (existing) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog (existing) (002-docker-healthcheck)
 
 - Go 1.21+ + Docker Engine API (e.g. github.com/docker/docker/client), standard library (001-container-health-monitor)
 
@@ -28,6 +29,7 @@ tests/
 Go 1.21+: Follow standard conventions
 
 ## Recent Changes
+- 002-docker-healthcheck: Added Go 1.21+ (existing) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog (existing)
 
 - 001-container-health-monitor: Added Go 1.21+ + Docker Engine API (e.g. github.com/docker/docker/client), standard library
 

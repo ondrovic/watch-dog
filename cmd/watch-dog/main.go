@@ -13,6 +13,7 @@ import (
 )
 
 func main() {
+	docker.InitLogging()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -29,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	flow := &recovery.Flow{Client: cli, Discovery: &parentToDeps}
+	flow := &recovery.Flow{Client: cli}
 
 	// Log startup and discovered parents so there is always visible output (e.g. docker logs watch-dog).
 	parentNames := parentToDeps.ParentNames()
@@ -61,12 +62,11 @@ func main() {
 				docker.LogError("refresh discovery", "error", err)
 				continue
 			}
-			flow.Discovery = &parentToDeps
 			if !parentToDeps.IsParent(ev.ContainerName) {
 				continue
 			}
 			docker.LogInfo("parent needs recovery", "parent", ev.ContainerName, "id", ev.ContainerID, "reason", ev.Status)
-			flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName)
+			flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName, &parentToDeps)
 		}
 	}
 }
@@ -92,7 +92,7 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		state := nameToState[parentName]
 		if state != "running" {
 			docker.LogInfo("startup: parent not running", "parent", parentName, "state", state)
-			flow.RunFullSequence(ctx, id, parentName)
+			flow.RunFullSequence(ctx, id, parentName, m)
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
@@ -100,7 +100,7 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 			continue
 		}
 		docker.LogInfo("startup: parent already unhealthy", "parent", parentName)
-		flow.RunFullSequence(ctx, id, parentName)
+		flow.RunFullSequence(ctx, id, parentName, m)
 	}
 }
 
@@ -119,7 +119,6 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 			if err != nil {
 				continue
 			}
-			flow.Discovery = &parentToDeps
 			containers, err := cli.ListContainers(ctx, true)
 			if err != nil {
 				continue
@@ -138,13 +137,17 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				state := nameToState[parentName]
 				if state != "running" {
 					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
-					flow.RunFullSequence(ctx, id, parentName)
+					flow.RunFullSequence(ctx, id, parentName, &parentToDeps)
 					continue
 				}
-				health, _, _ := cli.Inspect(ctx, id)
+				health, _, err := cli.Inspect(ctx, id)
+				if err != nil {
+					docker.LogDebug("polling: inspect failed", "parent", parentName, "error", err)
+					continue
+				}
 				if health == "unhealthy" {
 					docker.LogInfo("polling: unhealthy parent", "parent", parentName)
-					flow.RunFullSequence(ctx, id, parentName)
+					flow.RunFullSequence(ctx, id, parentName, &parentToDeps)
 				}
 			}
 		}
