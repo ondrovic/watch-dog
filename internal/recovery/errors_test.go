@@ -19,6 +19,14 @@ func TestIsUnrestartableError_markedForRemoval(t *testing.T) {
 	}
 }
 
+func TestIsUnrestartableError_cannotBeStartedRemoval(t *testing.T) {
+	// Exercises the branch that checks for "cannot be started" and "removal" (or "pending removal").
+	err := errors.New("container cannot be started; pending removal")
+	if !IsUnrestartableError(err) {
+		t.Error("expected cannot be started + removal to be unrestartable")
+	}
+}
+
 func TestIsUnrestartableError_dependencyMissing(t *testing.T) {
 	err := errors.New("joining network namespace of container xyz: No such container: xyz")
 	if !IsUnrestartableError(err) {

@@ -108,6 +108,26 @@
 
 ---
 
+## Phase 7: User Story 4 - Auto-recreate when container gone (Priority: P2)
+
+**Goal**: When the monitor marks a **parent** as unrestartable with reason **container_gone** (no such container), optionally trigger recreation of that service via `docker compose up -d <service_name>` so the operator does not have to run compose by hand. Recovery then proceeds when discovery sees the new container ID.
+
+**Context**: Per discussion—currently the monitor stops retrying the gone container ID and only recovers when something external (operator or updater) recreates the service. This story adds an opt-in behavior: when a parent is container_gone, the monitor can run compose up for that service name so the service comes back without manual intervention.
+
+**Independent Test**: (1) Enable WATCHDOG_AUTO_RECREATE. (2) Remove a monitored parent (e.g. `docker rm -f vpn`). (3) Trigger recovery (event or poll). (4) Verify one failure log (container_gone), then a log that auto-recreate was triggered, then on next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
+
+### Implementation for User Story 4
+
+- [ ] T022 [US4] Add optional callback `OnParentContainerGone func(parentName string)` to `recovery.Flow` in internal/recovery/restart.go; when adding parent ID to unrestartable set with reason **container_gone** (in RunFullSequence after Restart failure), invoke the callback with parentName if non-nil; document in Flow struct and method docstrings
+- [ ] T023 [US4] In cmd/watch-dog/main.go read optional env `WATCHDOG_AUTO_RECREATE` (e.g. `true`/`1` to enable); when enabled, set `Flow.OnParentContainerGone` to a function that runs `docker compose -f <composePath> up -d <parentName>` using `discovery.ComposePathFromEnv()` for compose path, and `exec.Command` (or equivalent) with working directory set appropriately (e.g. compose file directory or current dir); skip if compose path is empty
+- [ ] T024 [US4] Log at INFO when auto-recreate is triggered: parent name, compose path, and that the monitor will re-discover on next cycle in cmd/watch-dog/main.go (or where the callback is implemented)
+- [ ] T025 [US4] Ensure auto-recreate runs only for **parent** container_gone (not for dependents, and not for marked_for_removal or dependency_missing); callback is invoked only from the parent-restart-failure path with reason container_gone in internal/recovery/restart.go
+- [ ] T026 [US4] Update specs/005-fix-recovery-stale-container/contracts/recovery-unrestartable-behavior.md (or add a short section) describing optional auto-recreate when container_gone and WATCHDOG_AUTO_RECREATE is set; update quickstart.md and README Configuration table with WATCHDOG_AUTO_RECREATE
+
+**Checkpoint**: With WATCHDOG_AUTO_RECREATE enabled, removing a parent triggers one failure log, then compose up for that service, then recovery of the new container on next discovery.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -118,18 +138,21 @@
 - **Phase 4 (US2)**: Depends on Phase 3. Ensures new IDs are not blocked, set is bounded, and proactive dependent restart when parent has new ID (FR-007).
 - **Phase 5 (US3)**: Depends on Phase 3 (logging touches same code); can overlap with Phase 4.
 - **Phase 6 (Polish)**: Depends on Phase 3–5. Includes docstrings (T019), manual simulation guide (T017), and optional script (T018) so failure states can be reproduced and recovery verified.
+- **Phase 7 (US4)**: Depends on Phase 3 (unrestartable set and container_gone path). Adds opt-in auto-recreate when parent is container_gone.
 
 ### User Story Dependencies
 
 - **US1 (P1)**: After Foundational only. No dependency on US2/US3.
 - **US2 (P2)**: Builds on US1 (set cap/prune; re-discovery already uses new IDs from US1 design).
 - **US3 (P3)**: Builds on US1 (same logging points); can be done with US1 or after.
+- **US4 (P2)**: Builds on US1 (needs unrestartable add with reason container_gone and parent name in recovery path).
 
 ### Within Each User Story
 
 - US1: T006–T010 are sequential (skip check → parent failure → inspect failure → nameToID wiring → dependent skip/failure). T005 can run in parallel with T002–T004.
 - US2: T011 then T012 (cap then prune); T020 then T021 (last-known map + proactive restart loop in main; RestartDependents doc/behavior). T020–T021 can follow T012.
 - US3: T013 and T014 can be parallel (different log sites).
+- US4: T022 first (callback in Flow); then T023–T024 (main callback impl + log); T025 is a guard in restart.go; T026 can run in parallel (docs).
 
 ### Parallel Opportunities
 
@@ -137,6 +160,7 @@
 - T005 (tests) can run in parallel with T006–T010 once T002 is done.
 - T013 and T014 can run in parallel.
 - T016, T017, T018, T019 can run in parallel with T015 (docs, simulation assets, docstrings).
+- T026 can run in parallel with T023–T025 (docs vs code).
 
 ---
 
@@ -164,6 +188,16 @@ T011 → T012 → T020 → T021
 
 ---
 
+## Parallel Example: User Story 4
+
+```bash
+# Callback in Flow first, then main wiring and docs:
+T022 → T023 → T024 → T025
+T026 (docs) in parallel with T023–T025
+```
+
+---
+
 ## Implementation Strategy
 
 ### MVP First (User Story 1 Only)
@@ -181,6 +215,7 @@ T011 → T012 → T020 → T021
 3. Phase 4 (US2) → validate recovery after recreate, set bound, and proactive restart when only parent is replaced (quickstart "Verify proactive restart when only parent is replaced").
 4. Phase 5 (US3) → validate operator visibility.
 5. Phase 6 → quickstart, docs, and manual simulation guide so failure states can be reproduced and recovery verified.
+6. Phase 7 (US4) → optional auto-recreate when parent is container_gone (WATCHDOG_AUTO_RECREATE).
 
 ### Task Count Summary
 
@@ -192,9 +227,10 @@ T011 → T012 → T020 → T021
 | Phase 4 US2      | T011–T012, T020–T021 | 4     |
 | Phase 5 US3      | T013–T014  | 2     |
 | Phase 6 Polish   | T015–T019  | 5     |
-| **Total**        |            | **21**|
+| Phase 7 US4      | T022–T026  | 5     |
+| **Total**        |            | **26**|
 
-- **Per user story**: US1: 6 tasks (1 optional test). US2: 4 (set cap/prune + proactive restart per FR-007). US3: 2. Polish: 5 (includes docstrings, simulation guide, optional script).
+- **Per user story**: US1: 6 tasks (1 optional test). US2: 4 (set cap/prune + proactive restart per FR-007). US3: 2. Polish: 5. US4: 5 (auto-recreate when container_gone).
 - **Suggested MVP scope**: Phase 1 + Phase 2 + Phase 3 (User Story 1) = T001–T010.
 - **Manual simulation**: Use T017 (simulate-failures.md) and optionally T018 (script at scripts/simulate-unrestartable.sh, optionally Makefile target) to reproduce no-such-container, marked-for-removal, and dependency-missing states and verify the system properly recovers (bounded retries, skip logs, recovery after recreate).
 
@@ -208,4 +244,5 @@ T011 → T012 → T020 → T021
 - **Manual simulation (T017–T018)**: Provides a repeatable way to simulate the failure states (no such container, marked for removal, dependency missing) so operators and developers can verify that the system properly recovers (bounded retries, skip logs, recovery after recreate) without relying on an external updater.
 - **Docstrings (T019)**: All new or modified exported symbols in internal/recovery (errors.go, unrestartable.go, restart.go) must have Go docstrings; T002, T003, T004, T011, T012 call out docstrings for their respective files; T019 is a final pass to ensure nothing is missing.
 - **Proactive restart (T020–T021)**: Implements FR-007 / SC-005; when parent has new ID and is healthy (e.g. after updater replace), monitor proactively restarts that parent's dependents so the child comes back online (GitHub issue #5). Same cooldown as normal recovery.
+- **Auto-recreate (T022–T026, US4)**: When a parent is marked container_gone and WATCHDOG_AUTO_RECREATE is enabled, the monitor runs `docker compose up -d <parentName>` so the service is recreated without the operator running compose by hand; recovery then runs for the new container on next discovery.
 - Commit after each task or logical group; do not run git commit from the agent.

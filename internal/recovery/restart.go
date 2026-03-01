@@ -12,6 +12,7 @@ import (
 
 	"watch-dog/internal/discovery"
 	"watch-dog/internal/docker"
+	"watch-dog/internal/util"
 )
 
 const defaultWaitHealthyTimeout = 5 * time.Minute
@@ -61,7 +62,7 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 			if f.Unrestartable != nil && IsUnrestartableError(err) {
 				f.Unrestartable.Add(containerID, nil)
 				reasonStr := unrestartableReason(err)
-				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect failed, container unrestartable (will not retry this ID)"), "container", containerID, "id_short", shortID(containerID), "reason", reasonStr, "error", err)
+				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect failed, container unrestartable (will not retry this ID)"), "container", containerID, "id_short", util.ShortID(containerID), "reason", reasonStr, "error", err)
 			} else {
 				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect after restart failed (container %s)", containerID), "container", containerID, "error", err)
 			}
@@ -141,7 +142,7 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 			}
 		}
 		if f.Unrestartable != nil && f.Unrestartable.Contains(depID) {
-			docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping dependent %q (parent %s), container unrestartable", name, parentName), "dependent", name, "parent", parentName, "id_short", shortID(depID))
+			docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping dependent %q (parent %s), container unrestartable", name, parentName), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID))
 			continue
 		}
 		if f.DependentRestartCooldown > 0 && !f.shouldRestartDependent(name) {
@@ -152,7 +153,7 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 			if f.Unrestartable != nil && IsUnrestartableError(err) {
 				f.Unrestartable.Add(depID, nil)
 				reasonStr := unrestartableReason(err)
-				docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (%s), will not retry this container ID", name, reasonStr), "dependent", name, "parent", parentName, "id_short", shortID(depID), "reason", reasonStr, "error", err)
+				docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (%s), will not retry this container ID", name, reasonStr), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID), "reason", reasonStr, "error", err)
 			} else {
 				docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (parent %s)", name, parentName), "dependent", name, "parent", parentName, "error", err)
 			}
@@ -177,7 +178,7 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName, reason
 		reason = "unknown"
 	}
 	if f.Unrestartable != nil && f.Unrestartable.Contains(parentID) {
-		docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping parent %q, container unrestartable (will retry when new instance appears)", parentName), "parent", parentName, "id_short", shortID(parentID))
+		docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping parent %q, container unrestartable (will retry when new instance appears)", parentName), "parent", parentName, "id_short", util.ShortID(parentID))
 		return
 	}
 	docker.LogInfoRecovery(fmt.Sprintf("recovery: starting recovery sequence for parent %q (reason: %s)", parentName, reason), "parent", parentName, "reason", reason)
@@ -185,7 +186,7 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName, reason
 		if f.Unrestartable != nil && IsUnrestartableError(err) {
 			f.Unrestartable.Add(parentID, nil)
 			reasonStr := unrestartableReason(err)
-			docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart parent %q (%s), will not retry this container ID", parentName, reasonStr), "parent", parentName, "id_short", shortID(parentID), "reason", reasonStr, "error", err)
+			docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart parent %q (%s), will not retry this container ID", parentName, reasonStr), "parent", parentName, "id_short", util.ShortID(parentID), "reason", reasonStr, "error", err)
 			return
 		}
 		docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart parent %q", parentName), "parent", parentName, "error", err)
@@ -197,13 +198,6 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName, reason
 		return
 	}
 	f.RestartDependents(ctx, parentName, discovery, nameToID, selfName)
-}
-
-func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
 }
 
 func unrestartableReason(err error) string {

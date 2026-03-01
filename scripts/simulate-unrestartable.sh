@@ -31,8 +31,8 @@ fi
 echo ""
 echo "=== 2. Marked for removal ==="
 echo "# Stop and remove the container; daemon may report 'marked for removal' on start/restart."
-echo "  docker stop $PARENT_NAME"
-echo "  docker rm $PARENT_NAME"
+echo "  docker stop \"$PARENT_NAME\""
+echo "  docker rm \"$PARENT_NAME\""
 echo "  # Trigger recovery; expect 'marked_for_removal' and skip thereafter."
 
 echo ""

@@ -17,6 +17,7 @@ import (
 	"watch-dog/internal/discovery"
 	"watch-dog/internal/docker"
 	"watch-dog/internal/recovery"
+	"watch-dog/internal/util"
 )
 
 var recoveryCooldown time.Duration
@@ -134,7 +135,7 @@ func runProactiveRestartIfNeeded(ctx context.Context, cli *docker.Client, flow *
 	lastKnown.mu.Unlock()
 	for _, parentName := range toRestart {
 		currentID := nameToID[parentName]
-		docker.LogInfoRecovery("recovery: parent has new ID, proactively restarting dependents", "parent", parentName, "id_short", shortID(currentID))
+		docker.LogInfoRecovery("recovery: parent has new ID, proactively restarting dependents", "parent", parentName, "id_short", util.ShortID(currentID))
 		flow.RestartDependents(ctx, parentName, parentToDeps, nameToID, selfName)
 	}
 }
@@ -301,17 +302,9 @@ func main() {
 				flow.Unrestartable.Prune(containerIDs(containers))
 			}
 			runProactiveRestartIfNeeded(ctx, cli, flow, &parentToDeps, nameToID, selfName, lastKnownParents)
-			tryRecoverParent(ctx, ev.ContainerID, ev.ContainerName, ev.Status, shortID(ev.ContainerID), "event", flow, cooldown, &parentToDeps, nameToID, selfName)
+			tryRecoverParent(ctx, ev.ContainerID, ev.ContainerName, ev.Status, util.ShortID(ev.ContainerID), "event", flow, cooldown, &parentToDeps, nameToID, selfName)
 		}
 	}
-}
-
-// shortID returns the first 12 characters of a container ID.
-func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
 }
 
 // tryRecoverParent runs recovery for a parent if cooldown allows: StartRecovery, then defer EndRecovery, then RunFullSequence.
@@ -366,14 +359,14 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		}
 		state := nameToState[parentName]
 		if state != "running" {
-			tryRecoverParent(ctx, id, parentName, state, shortID(id), "startup", flow, cooldown, m, nameToID, selfName)
+			tryRecoverParent(ctx, id, parentName, state, util.ShortID(id), "startup", flow, cooldown, m, nameToID, selfName)
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
 		if err != nil || health != "unhealthy" {
 			continue
 		}
-		tryRecoverParent(ctx, id, parentName, "unhealthy", shortID(id), "startup", flow, cooldown, m, nameToID, selfName)
+		tryRecoverParent(ctx, id, parentName, "unhealthy", util.ShortID(id), "startup", flow, cooldown, m, nameToID, selfName)
 	}
 }
 
@@ -412,7 +405,7 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				}
 				state := nameToState[parentName]
 				if state != "running" {
-					tryRecoverParent(ctx, id, parentName, state, shortID(id), "polling", flow, cooldown, &parentToDeps, nameToID, selfName)
+					tryRecoverParent(ctx, id, parentName, state, util.ShortID(id), "polling", flow, cooldown, &parentToDeps, nameToID, selfName)
 					continue
 				}
 				health, _, err := cli.Inspect(ctx, id)
@@ -421,7 +414,7 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 					continue
 				}
 				if health == "unhealthy" {
-					tryRecoverParent(ctx, id, parentName, "unhealthy", shortID(id), "polling", flow, cooldown, &parentToDeps, nameToID, selfName)
+					tryRecoverParent(ctx, id, parentName, "unhealthy", util.ShortID(id), "polling", flow, cooldown, &parentToDeps, nameToID, selfName)
 				}
 			}
 		}
