@@ -20,14 +20,13 @@ type fakeClient struct {
 
 func (c *fakeClient) Restart(ctx context.Context, containerID string) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.nextRestartErr != nil {
 		err := c.nextRestartErr
 		c.nextRestartErr = nil
-		c.mu.Unlock()
 		return err
 	}
 	c.restarts = append(c.restarts, containerID)
-	c.mu.Unlock()
 	return nil
 }
 

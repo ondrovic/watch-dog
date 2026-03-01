@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -65,6 +66,7 @@ func init() {
 	if ds == "" {
 		dependentRestartCooldown = defaultDependentRestartCooldown
 	} else {
+		// Zero is permitted: dependentRestartCooldown == 0 disables dependent restarts.
 		d, err := time.ParseDuration(ds)
 		if err != nil || d < 0 {
 			reason := "must be non-negative"
@@ -195,8 +197,7 @@ func main() {
 			var buildErr error
 			built, buildErr = discovery.BuildParentToDependents(ctx, cli)
 			if buildErr == nil {
-				parentToDeps = built
-				runStartupReconciliation(ctx, cli, &parentToDeps, flow, cooldown, selfName)
+				runStartupReconciliation(ctx, cli, &built, flow, cooldown, selfName)
 				return
 			}
 			lastErr = buildErr
@@ -237,17 +238,25 @@ func main() {
 			if !parentToDeps.IsParent(ev.ContainerName) {
 				continue
 			}
-			func() {
-				if !cooldown.StartRecovery(ev.ContainerName) {
-					docker.LogDebug("skipping recovery, in cooldown or already in flight", "parent", ev.ContainerName, "id", ev.ContainerID)
-					return
-				}
-				defer cooldown.EndRecovery(ev.ContainerName)
-				docker.LogInfo("parent needs recovery", "parent", ev.ContainerName, "id", ev.ContainerID, "reason", ev.Status)
-				flow.RunFullSequence(ctx, ev.ContainerID, ev.ContainerName, &parentToDeps, selfName)
-			}()
+			idShort := ev.ContainerID
+			if len(idShort) > 12 {
+				idShort = idShort[:12]
+			}
+			docker.LogInfoRecovery(fmt.Sprintf("recovery: parent %q needs restart (reason: %s)", ev.ContainerName, ev.Status), "parent", ev.ContainerName, "reason", ev.Status, "id_short", idShort, "trigger", "event")
+			tryRecoverParent(ctx, ev.ContainerID, ev.ContainerName, ev.Status, flow, cooldown, &parentToDeps, selfName)
 		}
 	}
+}
+
+// tryRecoverParent runs recovery for a parent if cooldown allows: StartRecovery, then defer EndRecovery, then RunFullSequence.
+// reason describes why recovery was triggered (e.g. "stop", "unhealthy").
+func tryRecoverParent(ctx context.Context, parentID, parentName, reason string, flow *recovery.Flow, cooldown *recoveryCooldownState, parentToDeps *discovery.ParentToDependents, selfName string) {
+	if !cooldown.StartRecovery(parentName) {
+		docker.LogDebug("skipping recovery, in cooldown or in flight", "parent", parentName, "id", parentID)
+		return
+	}
+	defer cooldown.EndRecovery(parentName)
+	flow.RunFullSequence(ctx, parentID, parentName, reason, parentToDeps, selfName)
 }
 
 // buildContainerMaps builds name→ID and name→state maps from the given containers.
@@ -276,30 +285,16 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		}
 		state := nameToState[parentName]
 		if state != "running" {
-			docker.LogInfo("startup: parent not running", "parent", parentName, "state", state)
-			func() {
-				if !cooldown.StartRecovery(parentName) {
-					docker.LogDebug("startup: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
-					return
-				}
-				defer cooldown.EndRecovery(parentName)
-				flow.RunFullSequence(ctx, id, parentName, m, selfName)
-			}()
+			docker.LogInfoRecovery(fmt.Sprintf("recovery: parent %q not running at startup (state=%s)", parentName, state), "parent", parentName, "state", state, "trigger", "startup")
+			tryRecoverParent(ctx, id, parentName, state, flow, cooldown, m, selfName)
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
 		if err != nil || health != "unhealthy" {
 			continue
 		}
-		docker.LogInfo("startup: parent already unhealthy", "parent", parentName)
-		func() {
-			if !cooldown.StartRecovery(parentName) {
-				docker.LogDebug("startup: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
-				return
-			}
-			defer cooldown.EndRecovery(parentName)
-			flow.RunFullSequence(ctx, id, parentName, m, selfName)
-		}()
+		docker.LogInfoRecovery(fmt.Sprintf("recovery: parent %q unhealthy at startup", parentName), "parent", parentName, "trigger", "startup")
+		tryRecoverParent(ctx, id, parentName, "unhealthy", flow, cooldown, m, selfName)
 	}
 }
 
@@ -334,15 +329,8 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				}
 				state := nameToState[parentName]
 				if state != "running" {
-					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
-					func() {
-						if !cooldown.StartRecovery(parentName) {
-							docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
-							return
-						}
-						defer cooldown.EndRecovery(parentName)
-						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
-					}()
+					docker.LogInfoRecovery(fmt.Sprintf("recovery: parent %q not running (polling, state=%s)", parentName, state), "parent", parentName, "state", state, "trigger", "polling")
+					tryRecoverParent(ctx, id, parentName, state, flow, cooldown, &parentToDeps, selfName)
 					continue
 				}
 				health, _, err := cli.Inspect(ctx, id)
@@ -351,15 +339,8 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 					continue
 				}
 				if health == "unhealthy" {
-					docker.LogInfo("polling: unhealthy parent", "parent", parentName)
-					func() {
-						if !cooldown.StartRecovery(parentName) {
-							docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
-							return
-						}
-						defer cooldown.EndRecovery(parentName)
-						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
-					}()
+					docker.LogInfoRecovery(fmt.Sprintf("recovery: parent %q unhealthy (polling)", parentName), "parent", parentName, "trigger", "polling")
+					tryRecoverParent(ctx, id, parentName, "unhealthy", flow, cooldown, &parentToDeps, selfName)
 				}
 			}
 		}

@@ -233,3 +233,18 @@ func LogWarn(msg string, args ...any) { slog.Warn(msg, args...) }
 
 // LogError logs an error with key-value pairs.
 func LogError(msg string, args ...any) { slog.Error(msg, args...) }
+
+// LogInfoRecovery logs an info message with recovery attrs nested under a "recovery" group for JSON output.
+func LogInfoRecovery(msg string, recoveryAttrs ...any) {
+	slog.Info(msg, slog.Group("recovery", recoveryAttrs...))
+}
+
+// LogWarnRecovery logs a warning with recovery attrs nested under a "recovery" group for JSON output.
+func LogWarnRecovery(msg string, recoveryAttrs ...any) {
+	slog.Warn(msg, slog.Group("recovery", recoveryAttrs...))
+}
+
+// LogErrorRecovery logs an error with recovery attrs nested under a "recovery" group for JSON output.
+func LogErrorRecovery(msg string, recoveryAttrs ...any) {
+	slog.Error(msg, slog.Group("recovery", recoveryAttrs...))
+}
