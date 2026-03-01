@@ -218,7 +218,10 @@ func main() {
 	}
 	composePath := discovery.ComposePathFromEnv()
 	if autoRecreate && composePath != "" {
-		containerToService, _ := discovery.ContainerNameToServiceName(composePath)
+		containerToService, err := discovery.ContainerNameToServiceName(composePath)
+		if err != nil {
+			docker.LogWarn("container name to service mapping failed, using parent name as service", "compose_path", composePath, "error", err)
+		}
 		flow.OnParentContainerGone = func(parentName string) {
 			serviceName := parentName
 			if containerToService != nil {
@@ -237,13 +240,43 @@ func main() {
 					dir = wd
 				}
 			}
-			runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			runCtx, cancel := context.WithTimeout(ctx, composeUpTimeout)
 			defer cancel()
-			cmd := exec.CommandContext(runCtx, "docker", "compose", "-f", composePath, "up", "-d", serviceName)
-			cmd.Dir = dir
-			out, err := cmd.CombinedOutput()
+			runComposeUp := func(args []string) ([]byte, error) {
+				c := exec.CommandContext(runCtx, args[0], args[1:]...)
+				c.Dir = dir
+				return c.CombinedOutput()
+			}
+			v2Args := []string{"docker", "compose", "-f", composePath, "up", "-d", serviceName}
+			out, err := runComposeUp(v2Args)
 			if err != nil {
-				docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
+				// tryV1 heuristic: Docker returns exit code 125 when the compose plugin is missing or
+				// "docker compose" isn't available; the exitErr check and substring checks ("unknown shorthand flag",
+				// "Usage:", "is not a docker command") distinguish that from other 125 cases. Conservative fallback
+				// before exec.LookPath("docker-compose") and runComposeUp(v1Args); false positives may still trigger
+				// the fallback and its logging (docker.LogError/docker.LogInfo).
+				tryV1 := false
+				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 125 {
+					outStr := string(out)
+					tryV1 = strings.Contains(outStr, "unknown shorthand flag") ||
+						strings.Contains(outStr, "Usage:") ||
+						strings.Contains(outStr, "is not a docker command")
+				}
+				if tryV1 {
+					if v1Path, lookErr := exec.LookPath("docker-compose"); lookErr == nil {
+						v1Args := []string{v1Path, "-f", composePath, "up", "-d", serviceName}
+						out, err = runComposeUp(v1Args)
+						if err != nil {
+							docker.LogError("auto-recreate: docker compose up failed (tried docker compose and docker-compose)", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
+						} else {
+							docker.LogInfo("auto-recreate: docker-compose up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out))
+						}
+					} else {
+						docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
+					}
+				} else {
+					docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
+				}
 			} else {
 				docker.LogInfo("auto-recreate: docker compose up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out))
 			}
@@ -407,6 +440,9 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		tryRecoverParent(ctx, id, parentName, "unhealthy", util.ShortID(id), "startup", flow, cooldown, m, nameToID, selfName)
 	}
 }
+
+// composeUpTimeout is the maximum time allowed for a single "docker compose up" (or docker-compose up) run during auto-recreate.
+const composeUpTimeout time.Duration = 60 * time.Second
 
 const pollInterval = 60 * time.Second
 

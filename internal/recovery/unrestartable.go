@@ -13,7 +13,7 @@ const defaultUnrestartableCap = 100
 // and thread-safe. Call Add to record an ID, Contains to check, and Prune to
 // remove IDs not in the current container list.
 type Set struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	ids   map[string]struct{}
 	order []string // FIFO for cap eviction
 	cap   int
@@ -29,8 +29,8 @@ func NewSet(cap int) *Set {
 
 // Contains reports whether containerID is in the set.
 func (s *Set) Contains(containerID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	_, ok := s.ids[containerID]
 	return ok
 }

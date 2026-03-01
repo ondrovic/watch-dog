@@ -202,8 +202,11 @@ func ContainerNameToServiceName(composePath string) (map[string]string, error) {
 		return make(map[string]string), nil
 	}
 	f, err := ParseComposeFile(composePath)
-	if err != nil || f == nil {
+	if err != nil {
 		return nil, err
+	}
+	if f == nil {
+		return make(map[string]string), nil
 	}
 	out := make(map[string]string)
 	for svcName, svc := range f.Services {

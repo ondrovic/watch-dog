@@ -69,9 +69,9 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID, parentName str
 				if (reasonStr == "container_gone" || reasonStr == "marked_for_removal") && parentName != "" && f.OnParentContainerGone != nil {
 					f.OnParentContainerGone(parentName)
 				}
-				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect failed, container unrestartable (will not retry this ID)"), "container", containerID, "id_short", util.ShortID(containerID), "reason", reasonStr, "error", err)
+				docker.LogErrorRecovery("recovery: inspect failed, container unrestartable (will not retry this ID)", "container", containerID, "id_short", util.ShortID(containerID), "reason", reasonStr, "error", err)
 			} else {
-				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect after restart failed (container %s)", containerID), "container", containerID, "error", err)
+				docker.LogErrorRecovery("recovery: inspect after restart failed", "container", containerID, "error", err)
 			}
 			return false
 		}
@@ -120,6 +120,7 @@ func (f *Flow) clearDependentCooldown(name string) {
 // If DependentRestartCooldown is set, a dependent that was restarted within that window is skipped (at most one restart per dependent per cooldown).
 // If a dependent's container ID is in the unrestartable set, that dependent is skipped. On Restart failure with an unrestartable error, the dependent's ID is added to the set.
 // discovery may be nil; then no dependents are restarted. nameToID maps container name to ID (for unrestartable check and logging); may be nil.
+// When nameToID is nil, depID is set to the dependent's container name (Docker API accepts name for Restart); unrestartable check and add are skipped for dependents so the set remains ID-only and behavior is consistent with other code paths.
 // RestartDependents can be invoked without prior RestartParent (e.g. proactive restart when parent has new ID and is already healthy); same cooldown applies.
 func (f *Flow) RestartDependents(ctx context.Context, parentName string, discovery *discovery.ParentToDependents, nameToID map[string]string, selfName string) {
 	if discovery == nil {
@@ -141,6 +142,9 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 			}
 		}
 	}
+	if nameToID == nil && f.Unrestartable != nil {
+		docker.LogInfoRecovery(fmt.Sprintf("recovery: nameToID absent, skipping unrestartable check for dependents (parent %s)", parentName), "parent", parentName)
+	}
 	for _, name := range ordered {
 		var depID string
 		if nameToID != nil {
@@ -151,14 +155,13 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 			}
 			depID = id
 		} else {
+			// Fallback: use name so Restart works (Docker accepts name). Unrestartable set is not checked or updated when nameToID is nil so keys stay ID-only.
+			// TODO if we ever need to check/add unrestartable when nameToID is nil: either resolve name→ID (e.g. caller-provided lookup) or document that set keys accept names as well / normalize keys globally.
 			depID = name
 		}
 		if nameToID != nil && f.Unrestartable != nil && f.Unrestartable.Contains(depID) {
 			docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping dependent %q (parent %s), container unrestartable", name, parentName), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID))
 			continue
-		}
-		if nameToID == nil && f.Unrestartable != nil {
-			docker.LogInfoRecovery(fmt.Sprintf("recovery: nameToID absent, skipping unrestartable check for dependent %q (parent %s)", name, parentName), "dependent", name, "parent", parentName)
 		}
 		if f.DependentRestartCooldown > 0 && !f.shouldRestartDependent(name) {
 			docker.LogDebug("skip dependent restart, within cooldown", "dependent", name, "parent", parentName)
@@ -166,9 +169,13 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 		}
 		if err := f.Client.Restart(ctx, depID); err != nil {
 			if f.Unrestartable != nil && IsUnrestartableError(err) {
-				f.Unrestartable.Add(depID, nil)
 				reasonStr := unrestartableReason(err)
-				docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (%s), will not retry this container ID", name, reasonStr), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID), "reason", reasonStr, "error", err)
+				if nameToID != nil {
+					f.Unrestartable.Add(depID, nil)
+					docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (%s), will not retry this container ID", name, reasonStr), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID), "reason", reasonStr, "error", err)
+				} else {
+					docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (%s), nameToID absent so not recording as unrestartable", name, reasonStr), "dependent", name, "parent", parentName, "reason", reasonStr, "error", err)
+				}
 			} else {
 				docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart dependent %q (parent %s)", name, parentName), "dependent", name, "parent", parentName, "error", err)
 			}
