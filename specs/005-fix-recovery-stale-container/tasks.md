@@ -24,7 +24,7 @@
 
 **Purpose**: Confirm project structure; no new project init (existing Go binary).
 
-- [ ] T001 Verify project structure per plan (cmd/watch-dog, internal/docker, internal/discovery, internal/recovery) and that no new dependencies are required
+- [x] T001 Verify project structure per plan (cmd/watch-dog, internal/docker, internal/discovery, internal/recovery) and that no new dependencies are required
 
 ---
 
@@ -34,9 +34,9 @@
 
 **Critical**: No user story work can begin until this phase is complete.
 
-- [ ] T002 [P] Add function to classify Docker API errors as unrestartable in internal/recovery/errors.go (No such container, marked for removal, joining network namespace + No such container) per research.md and contracts/recovery-unrestartable-behavior.md; include package and exported function docstrings (e.g. IsUnrestartableError) per Go conventions
-- [ ] T003 Add in-memory unrestartable set type (bounded size, e.g. max 100 IDs) with thread-safe add/contains and optional prune in internal/recovery/unrestartable.go per data-model.md; include package and exported type/method docstrings per Go conventions
-- [ ] T004 Add unrestartable set field to recovery.Flow and wire check-before-run (skip when ID in set) and add-on-failure in internal/recovery/restart.go; add or update Flow and method docstrings for new behavior
+- [x] T002 [P] Add function to classify Docker API errors as unrestartable in internal/recovery/errors.go (No such container, marked for removal, joining network namespace + No such container) per research.md and contracts/recovery-unrestartable-behavior.md; include package and exported function docstrings (e.g. IsUnrestartableError) per Go conventions
+- [x] T003 Add in-memory unrestartable set type (bounded size, e.g. max 100 IDs) with thread-safe add/contains and optional prune in internal/recovery/unrestartable.go per data-model.md; include package and exported type/method docstrings per Go conventions
+- [x] T004 Add unrestartable set field to recovery.Flow and wire check-before-run (skip when ID in set) and add-on-failure in internal/recovery/restart.go; add or update Flow and method docstrings for new behavior
 
 **Checkpoint**: Foundation ready; US1 implementation can begin.
 
@@ -50,15 +50,15 @@
 
 ### Optional: Tests for User Story 1
 
-- [ ] T005 [P] [US1] Add unit tests for unrestartable error classification (no such container, marked for removal, dependency missing) in internal/recovery/errors_test.go
+- [x] T005 [P] [US1] Add unit tests for unrestartable error classification (no such container, marked for removal, dependency missing) in internal/recovery/errors_test.go
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] At start of RunFullSequence, if parentID is in the unrestartable set then skip sequence and log recovery skipped for parent (INFO or DEBUG) in internal/recovery/restart.go
-- [ ] T007 [US1] On Restart(parentID) failure in RunFullSequence, if error is unrestartable then add parentID to set and log failure with reason (container gone / marked for removal / dependency missing); return without wait or dependents in internal/recovery/restart.go
-- [ ] T008 [US1] In WaitUntilHealthy, on Inspect(parentID) error classify as unrestartable; if so add parentID to set, log, and return false in internal/recovery/restart.go
-- [ ] T009 [US1] Pass nameToID (or equivalent) into RunFullSequence and RestartDependents so dependent container ID is available when restarting dependents; in main.go ensure nameToID from ListContainers is passed when calling tryRecoverParent/flow.RunFullSequence
-- [ ] T010 [US1] In RestartDependents, before Restart(dependent) check if dependent ID is in unrestartable set and skip that dependent with log; on Restart failure classify and if unrestartable add dependent ID to set and log in internal/recovery/restart.go
+- [x] T006 [US1] At start of RunFullSequence, if parentID is in the unrestartable set then skip sequence and log recovery skipped for parent (INFO or DEBUG) in internal/recovery/restart.go
+- [x] T007 [US1] On Restart(parentID) failure in RunFullSequence, if error is unrestartable then add parentID to set and log failure with reason (container gone / marked for removal / dependency missing); return without wait or dependents in internal/recovery/restart.go
+- [x] T008 [US1] In WaitUntilHealthy, on Inspect(parentID) error classify as unrestartable; if so add parentID to set, log, and return false in internal/recovery/restart.go
+- [x] T009 [US1] Pass nameToID (or equivalent) into RunFullSequence and RestartDependents so dependent container ID is available when restarting dependents; in main.go ensure nameToID from ListContainers is passed when calling tryRecoverParent/flow.RunFullSequence
+- [x] T010 [US1] In RestartDependents, before Restart(dependent) check if dependent ID is in unrestartable set and skip that dependent with log; on Restart failure classify and if unrestartable add dependent ID to set and log in internal/recovery/restart.go
 
 **Checkpoint**: User Story 1 is complete; repeated failed recovery for the same container ID is bounded. FR-006 (continue monitoring others) is satisfied by skip-and-continue in T006 and T010; no separate task.
 
@@ -72,10 +72,10 @@
 
 ### Implementation for User Story 2
 
-- [ ] T011 [US2] Implement set cap: when adding would exceed max size (e.g. 100), remove oldest or an entry not in the current container list in internal/recovery/unrestartable.go; document in type/method docstrings
-- [ ] T012 [US2] Add pruning: when a fresh container list is available, remove from unrestartable set any ID not in that list; add Prune method (or equivalent) with docstring in internal/recovery/unrestartable.go and call from main after ListContainers in cmd/watch-dog/main.go
-- [ ] T020 [US2] Add last-known parent ID map (parent name → container ID) in main.go; after each discovery (event and polling) for each parent if current ID != last-known and last-known was set and parent is healthy (Inspect), call flow.RestartDependents for that parent and log proactive restart (parent has new ID, restarting dependents), then set last-known to current ID; on first discovery only populate last-known without restarting per research §7 and contracts in cmd/watch-dog/main.go
-- [ ] T021 [US2] Ensure RestartDependents can be invoked without prior RestartParent (for proactive case) and document in internal/recovery/restart.go; same DependentRestartCooldown applies per FR-007
+- [x] T011 [US2] Implement set cap: when adding would exceed max size (e.g. 100), remove oldest or an entry not in the current container list in internal/recovery/unrestartable.go; document in type/method docstrings
+- [x] T012 [US2] Add pruning: when a fresh container list is available, remove from unrestartable set any ID not in that list; add Prune method (or equivalent) with docstring in internal/recovery/unrestartable.go and call from main after ListContainers in cmd/watch-dog/main.go
+- [x] T020 [US2] Add last-known parent ID map (parent name → container ID) in main.go; after each discovery (event and polling) for each parent if current ID != last-known and last-known was set and parent is healthy (Inspect), call flow.RestartDependents for that parent and log proactive restart (parent has new ID, restarting dependents), then set last-known to current ID; on first discovery only populate last-known without restarting per research §7 and contracts in cmd/watch-dog/main.go
+- [x] T021 [US2] Ensure RestartDependents can be invoked without prior RestartParent (for proactive case) and document in internal/recovery/restart.go; same DependentRestartCooldown applies per FR-007
 
 **Checkpoint**: New instances (new ID) are not blocked; set stays bounded; when only parent is replaced, dependents are proactively restarted (SC-005).
 
@@ -89,8 +89,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T013 [US3] Ensure first unrestartable failure log includes structured attributes: parent or dependent name, container id_short, reason (container_gone / marked_for_removal / dependency_missing) in internal/recovery/restart.go and internal/docker/log.go if needed
-- [ ] T014 [US3] Ensure skip log includes parent/dependent name and reason (e.g. "recovery skipped, container unrestartable") at INFO or DEBUG in internal/recovery/restart.go
+- [x] T013 [US3] Ensure first unrestartable failure log includes structured attributes: parent or dependent name, container id_short, reason (container_gone / marked_for_removal / dependency_missing) in internal/recovery/restart.go and internal/docker/log.go if needed
+- [x] T014 [US3] Ensure skip log includes parent/dependent name and reason (e.g. "recovery skipped, container unrestartable") at INFO or DEBUG in internal/recovery/restart.go
 
 **Checkpoint**: Operators can distinguish "recovery failed, retries limited" from "recovery in progress."
 
@@ -100,11 +100,11 @@
 
 **Purpose**: Validation, docs, docstrings for new APIs, and a way to manually simulate failure states so the system can be verified to recover correctly.
 
-- [ ] T015 Run quickstart.md verification steps (bounded retries, recovery after recreate, other containers still monitored) and fix any gaps
-- [ ] T016 [P] Update README or operator docs if recovery behavior (unrestartable, no config) should be mentioned per specs/005-fix-recovery-stale-container/quickstart.md
-- [ ] T017 Add documentation with step-by-step instructions to manually simulate each unrestartable state (no such container, marked for removal, dependency missing) and how to verify watch-dog bounded retries and recovery after recreate in specs/005-fix-recovery-stale-container/simulate-failures.md
-- [ ] T018 [P] Add an optional script at scripts/simulate-unrestartable.sh that prints or runs Docker commands to simulate each failure state (no such container, marked for removal, dependency missing) for use during verification; optionally add a Makefile target at repo root that invokes the script
-- [ ] T019 Add or update Go docstrings for all new or modified exported symbols in internal/recovery (errors.go, unrestartable.go, restart.go): packages, types, and functions/methods per Go conventions; ensure no new public API is missing documentation
+- [x] T015 Run quickstart.md verification steps (bounded retries, recovery after recreate, other containers still monitored) and fix any gaps
+- [x] T016 [P] Update README or operator docs if recovery behavior (unrestartable, no config) should be mentioned per specs/005-fix-recovery-stale-container/quickstart.md
+- [x] T017 Add documentation with step-by-step instructions to manually simulate each unrestartable state (no such container, marked for removal, dependency missing) and how to verify watch-dog bounded retries and recovery after recreate in specs/005-fix-recovery-stale-container/simulate-failures.md
+- [x] T018 [P] Add an optional script at scripts/simulate-unrestartable.sh that prints or runs Docker commands to simulate each failure state (no such container, marked for removal, dependency missing) for use during verification; optionally add a Makefile target at repo root that invokes the script
+- [x] T019 Add or update Go docstrings for all new or modified exported symbols in internal/recovery (errors.go, unrestartable.go, restart.go): packages, types, and functions/methods per Go conventions; ensure no new public API is missing documentation
 
 ---
 

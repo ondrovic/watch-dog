@@ -9,6 +9,7 @@ A standalone Docker container that monitors parent/child container health and re
 - **Multi-parent mitigation**: Containers with multiple `depends_on` parents are restarted at most once per cooldown window (default 90s) when several parents recover in quick succession, avoiding redundant restarts.
 - **Event-driven**: Uses Docker `health_status` events; optional 60s polling fallback for robustness.
 - **Startup reconciliation**: On start, treats already-unhealthy parents and runs the full recovery sequence.
+- **Bounded retries when containers are gone**: If a restart fails because the container no longer exists, is marked for removal, or a dependency (e.g. network namespace) is missing, the monitor does not retry that container ID indefinitely; it logs the failure and skips that ID until re-discovery yields a new instance. No extra configuration. When only a parent is replaced by an updater (e.g. watchtower), the monitor proactively restarts that parent’s dependents so the child comes back online.
 
 ## Using in Docker Compose
 
