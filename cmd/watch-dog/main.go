@@ -326,7 +326,7 @@ func main() {
 							docker.LogError("auto-recreate: failed to load compose project", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
 							return
 						}
-						project, err = project.WithSelectedServices([]string{serviceName}, types.IncludeDependencies)
+						project, err = project.WithSelectedServices([]string{serviceName}, types.IgnoreDependencies)
 						if err != nil {
 							docker.LogError("auto-recreate: failed to filter project to service", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
 							return
