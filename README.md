@@ -48,7 +48,7 @@ Short form `depends_on` is also supported:
       - vpn
 ```
 
-**Required**: Mount the compose file (e.g. `.:/app:ro`) and set `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`) to the path **inside the container** (e.g. `/app/docker-compose.yml`). Without this, the monitor will not discover any parents.
+**Required**: Mount the compose file (e.g. `.:/app:ro`) and set `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`) to the path **inside the container** (e.g. `/app/docker-compose.yml`). Without this, the monitor will not discover any parents. For **auto-recreate** to work when your compose file uses variable substitution (e.g. `${RETRIES}` in healthchecks), the project’s `.env` must be available when loading the project. Recommended: mount the **project directory** (e.g. `.:/app:ro`) so both `docker-compose.yml` and `.env` are under the same path (e.g. `/app/docker-compose.yml` and `/app/.env`). If you mount compose and `.env` separately, set `WATCHDOG_ENV_FILE` to the path of the `.env` file inside the container.
 
 ## Healthcheck
 
@@ -94,6 +94,7 @@ Use a `.env` file or export these variables so Compose can substitute them (e.g.
 | `WATCHDOG_DEPENDENT_RESTART_COOLDOWN` | Optional. When a container has multiple parents (e.g. `depends_on: [qbittorrent, prowlarr]`), the monitor skips restarting it again if it was already restarted within this duration. Default: `90s`. Set to `0` to disable (restart after every parent recovery). Invalid values fall back to 90s with a warning. See [recovery-behavior](specs/001-container-health-monitor/contracts/recovery-behavior.md). |
 | `WATCHDOG_INITIAL_DISCOVERY_WAIT` | Optional. Duration to wait after the first discovery cycle before the monitor may run recovery (e.g. `30s`, `2m`, `5m`). Default: `60s`. Use when bringing the stack up with `docker compose up` so the monitor does not restart dependents during initial startup; set to at least how long your stack needs to become ready (e.g. `120s` or `5m`). Invalid or non-positive values fall back to 60s with a warning in logs. |
 | `WATCHDOG_AUTO_RECREATE` | Optional. When a parent is marked unrestartable with reason **container_gone** or **marked_for_removal**, run `docker compose up -d <service_name>` (or `docker-compose` when the Compose V2 plugin is not available) so the service comes back without manual intervention. Works with both Compose V1 and V2. The monitor resolves container name to service name from the compose file when `container_name` is set. Set to `true`, `1`, or `yes` to enable. Requires `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`). If unset or compose path empty, auto-recreate is disabled. See [recovery-unrestartable-behavior](specs/005-fix-recovery-stale-container/contracts/recovery-unrestartable-behavior.md). |
+| `WATCHDOG_ENV_FILE` | Optional. Path (inside the container) to the project’s `.env` file used when loading the Compose project for auto-recreate. If unset, the monitor uses `.env` in the same directory as the compose file when present. Set this if you mount compose and `.env` separately (e.g. `WATCHDOG_ENV_FILE=/app/.env`). Relative paths are resolved against the compose file’s directory. |
 
 #### Logging: LOG_LEVEL and LOG_FORMAT
 
@@ -157,6 +158,9 @@ Or with Compose: `docker compose logs watch-dog`. Logs are emitted to stdout (e.
 
 - **Containers not recognized (no `com.docker.compose.service`)**  
   - The monitor maps compose **service names** to containers using the `com.docker.compose.service` label set by Docker Compose. Containers not started by Compose (e.g. plain `docker run`) will not be linked to services and are ignored for discovery. Run your stack with `docker compose up` (or equivalent) so labels are applied.
+
+- **Auto-recreate: "failed to load compose project"** (e.g. interpolation or parsing errors such as `strconv.Atoi: parsing "": invalid syntax` on healthcheck fields)  
+  - The compose file is loaded with variables from a `.env` file. If `.env` is missing at the compose file’s directory inside the container, variables like `RETRIES` or `TZ` are empty and interpolation fails. Mount the **project directory** so both `docker-compose.yml` and `.env` are available (e.g. `.:/app:ro`), or set `WATCHDOG_ENV_FILE` to the path of `.env` inside the container.
 
 For more detail on `depends_on` format and matching, see [contracts/depends-on-label.md](specs/001-container-health-monitor/contracts/depends-on-label.md) and [quickstart](specs/001-container-health-monitor/quickstart.md).
 

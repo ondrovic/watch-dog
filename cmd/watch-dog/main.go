@@ -261,15 +261,27 @@ func main() {
 						runCtx, cancel := context.WithTimeout(ctx, composeUpTimeout)
 						defer cancel()
 						projectName := os.Getenv("COMPOSE_PROJECT_NAME")
-						if projectName == "" {
-							projectName = filepath.Base(filepath.Dir(composePath))
+						workingDir := filepath.Dir(composePath)
+						var envFileOpt composecli.ProjectOptionsFn
+						if envFile := os.Getenv("WATCHDOG_ENV_FILE"); envFile != "" {
+							envFilePath := envFile
+							if !filepath.IsAbs(envFilePath) {
+								envFilePath = filepath.Join(workingDir, envFile)
+							}
+							envFileOpt = composecli.WithEnvFiles(envFilePath)
+						} else {
+							envFileOpt = composecli.WithEnvFiles()
 						}
-						projOpts, err := composecli.NewProjectOptions([]string{composePath},
-							composecli.WithWorkingDirectory(filepath.Dir(composePath)),
+						opts := []composecli.ProjectOptionsFn{
+							composecli.WithWorkingDirectory(workingDir),
 							composecli.WithOsEnv,
+							envFileOpt,
 							composecli.WithDotEnv,
-							composecli.WithName(projectName),
-						)
+						}
+						if projectName != "" && projectName != "." {
+							opts = append(opts, composecli.WithName(projectName))
+						}
+						projOpts, err := composecli.NewProjectOptions([]string{composePath}, opts...)
 						if err != nil {
 							docker.LogError("auto-recreate: failed to create project options", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
 							return
