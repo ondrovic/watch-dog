@@ -287,12 +287,14 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				state := nameToState[parentName]
 				if state != "running" {
 					docker.LogInfo("polling: parent not running", "parent", parentName, "state", state)
-					if cooldown.StartRecovery(parentName) {
+					func() {
+						if !cooldown.StartRecovery(parentName) {
+							docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
+							return
+						}
 						defer cooldown.EndRecovery(parentName)
 						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
-					} else {
-						docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
-					}
+					}()
 					continue
 				}
 				health, _, err := cli.Inspect(ctx, id)
@@ -302,12 +304,14 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				}
 				if health == "unhealthy" {
 					docker.LogInfo("polling: unhealthy parent", "parent", parentName)
-					if cooldown.StartRecovery(parentName) {
+					func() {
+						if !cooldown.StartRecovery(parentName) {
+							docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
+							return
+						}
 						defer cooldown.EndRecovery(parentName)
 						flow.RunFullSequence(ctx, id, parentName, &parentToDeps, selfName)
-					} else {
-						docker.LogDebug("polling: skipping recovery, in cooldown or in flight", "parent", parentName, "id", id)
-					}
+					}()
 				}
 			}
 		}
