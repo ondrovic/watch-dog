@@ -63,7 +63,10 @@ func init() {
 // isInitialDiscoveryComplete returns true after the initial discovery phase (first discovery + wait) has elapsed.
 // Until then, recovery and runStartupReconciliation must not run; see contracts/initial-discovery-behavior.md.
 func isInitialDiscoveryComplete() bool {
-	return !initialDiscoveryPhaseEnd.IsZero() && time.Now().After(initialDiscoveryPhaseEnd)
+	if initialDiscoveryPhaseEnd.IsZero() {
+		return false
+	}
+	return !time.Now().Before(initialDiscoveryPhaseEnd)
 }
 
 // recoveryCooldownState tracks last recovery time and in-flight recovery per parent
@@ -149,11 +152,15 @@ func main() {
 	// Run startup reconciliation exactly once when initial discovery phase ends (not at startup).
 	// Post-phase: no cascade—reconciliation runs once; cooldown/in-flight prevent duplicate runs (contracts/initial-discovery-behavior.md).
 	go func() {
+		d := initialDiscoveryPhaseEnd.Sub(time.Now())
+		if d <= 0 {
+			d = 0
+		}
 		select {
 		case <-ctx.Done():
 			docker.LogInfo("shutdown during initial discovery wait, skipping startup reconciliation")
 			return
-		case <-time.After(initialDiscoveryWait):
+		case <-time.After(d):
 			// wait completed; proceed
 		}
 		docker.LogInfo("initial discovery complete, recovery enabled")
