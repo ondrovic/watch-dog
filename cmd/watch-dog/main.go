@@ -9,13 +9,18 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	composecli "github.com/compose-spec/compose-go/v2/cli"
+	"github.com/docker/cli/cli/command"
+	cliflags "github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
 
 	"watch-dog/internal/discovery"
 	"watch-dog/internal/docker"
@@ -27,6 +32,9 @@ var recoveryCooldown time.Duration
 var initialDiscoveryWait time.Duration
 var dependentRestartCooldown time.Duration
 var autoRecreate bool
+
+// composeUpTimeout is the maximum time allowed for a single compose up operation (Compose SDK) during auto-recreate.
+const composeUpTimeout time.Duration = 60 * time.Second
 
 // initialDiscoveryPhaseEnd is set after first discovery; recovery is gated until time.Now() > initialDiscoveryPhaseEnd.
 var initialDiscoveryPhaseEnd time.Time
@@ -217,68 +225,71 @@ func main() {
 		Unrestartable:            recovery.NewSet(0),
 	}
 	composePath := discovery.ComposePathFromEnv()
+	var dockerCLI *command.DockerCli
 	if autoRecreate && composePath != "" {
 		containerToService, err := discovery.ContainerNameToServiceName(composePath)
 		if err != nil {
 			docker.LogWarn("container name to service mapping failed, using parent name as service", "compose_path", composePath, "error", err)
 		}
-		flow.OnParentContainerGone = func(parentName string) {
-			serviceName := parentName
-			if containerToService != nil {
-				if s := containerToService[parentName]; s != "" {
-					serviceName = s
-				}
-			}
-			docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "service", serviceName, "compose_path", composePath)
-			dir := filepath.Dir(composePath)
-			if dir == "" || dir == "." {
-				wd, err := os.Getwd()
-				if err != nil {
-					docker.LogWarn("auto-recreate: could not get working directory, using \".\"", "compose_path", composePath, "error", err)
-					dir = "."
-				} else {
-					dir = wd
-				}
-			}
-			runCtx, cancel := context.WithTimeout(ctx, composeUpTimeout)
-			defer cancel()
-			runComposeUp := func(args []string) ([]byte, error) {
-				c := exec.CommandContext(runCtx, args[0], args[1:]...)
-				c.Dir = dir
-				return c.CombinedOutput()
-			}
-			v2Args := []string{"docker", "compose", "-f", composePath, "up", "-d", serviceName}
-			out, err := runComposeUp(v2Args)
+		dockerCLI, err = command.NewDockerCli()
+		if err != nil {
+			docker.LogWarn("auto-recreate: failed to create Docker CLI, disabling auto-recreate", "error", err)
+			autoRecreate = false
+		} else {
+			err = dockerCLI.Initialize(cliflags.NewClientOptions())
 			if err != nil {
-				// tryV1 heuristic: Docker returns exit code 125 when the compose plugin is missing or
-				// "docker compose" isn't available; the exitErr check and substring checks ("unknown shorthand flag",
-				// "Usage:", "is not a docker command") distinguish that from other 125 cases. Conservative fallback
-				// before exec.LookPath("docker-compose") and runComposeUp(v1Args); false positives may still trigger
-				// the fallback and its logging (docker.LogError/docker.LogInfo).
-				tryV1 := false
-				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 125 {
-					outStr := string(out)
-					tryV1 = strings.Contains(outStr, "unknown shorthand flag") ||
-						strings.Contains(outStr, "Usage:") ||
-						strings.Contains(outStr, "is not a docker command")
-				}
-				if tryV1 {
-					if v1Path, lookErr := exec.LookPath("docker-compose"); lookErr == nil {
-						v1Args := []string{v1Path, "-f", composePath, "up", "-d", serviceName}
-						out, err = runComposeUp(v1Args)
-						if err != nil {
-							docker.LogError("auto-recreate: docker compose up failed (tried docker compose and docker-compose)", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
-						} else {
-							docker.LogInfo("auto-recreate: docker-compose up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out))
-						}
-					} else {
-						docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
-					}
-				} else {
-					docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
-				}
+				docker.LogWarn("auto-recreate: failed to initialize Docker CLI, disabling auto-recreate", "error", err)
+				autoRecreate = false
 			} else {
-				docker.LogInfo("auto-recreate: docker compose up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out))
+				defer func() {
+					if dockerCLI != nil {
+						if c := dockerCLI.Client(); c != nil {
+							_ = c.Close()
+						}
+					}
+				}()
+				composeSvc := compose.NewComposeService(dockerCLI)
+				flow.OnParentContainerGone = func(parentName string) {
+					serviceName := parentName
+					if containerToService != nil {
+						if s := containerToService[parentName]; s != "" {
+							serviceName = s
+						}
+					}
+					docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "service", serviceName, "compose_path", composePath)
+					go func() {
+						runCtx, cancel := context.WithTimeout(ctx, composeUpTimeout)
+						defer cancel()
+						projectName := os.Getenv("COMPOSE_PROJECT_NAME")
+						if projectName == "" {
+							projectName = filepath.Base(filepath.Dir(composePath))
+						}
+						projOpts, err := composecli.NewProjectOptions([]string{composePath},
+							composecli.WithWorkingDirectory(filepath.Dir(composePath)),
+							composecli.WithOsEnv,
+							composecli.WithDotEnv,
+							composecli.WithName(projectName),
+						)
+						if err != nil {
+							docker.LogError("auto-recreate: failed to create project options", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						project, err := projOpts.LoadProject(runCtx)
+						if err != nil {
+							docker.LogError("auto-recreate: failed to load compose project", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						err = composeSvc.Up(runCtx, project, api.UpOptions{
+							Create: api.CreateOptions{Services: []string{serviceName}, Recreate: api.RecreateForce},
+							Start:  api.StartOptions{Services: []string{serviceName}},
+						})
+						if err != nil {
+							docker.LogError("auto-recreate: Compose SDK Up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						docker.LogInfo("auto-recreate: Compose SDK up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath)
+					}()
+				}
 			}
 		}
 	}
@@ -440,9 +451,6 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		tryRecoverParent(ctx, id, parentName, "unhealthy", util.ShortID(id), "startup", flow, cooldown, m, nameToID, selfName)
 	}
 }
-
-// composeUpTimeout is the maximum time allowed for a single "docker compose up" (or docker-compose up) run during auto-recreate.
-const composeUpTimeout time.Duration = 60 * time.Second
 
 const pollInterval = 60 * time.Second
 

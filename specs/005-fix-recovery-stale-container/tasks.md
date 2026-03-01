@@ -25,7 +25,7 @@
 **Purpose**: Confirm project structure and add dependencies required for US4 (Compose SDK).
 
 - [x] T001 Verify project structure per plan (cmd/watch-dog, internal/docker, internal/discovery, internal/recovery)
-- [ ] T002 [P] Add Docker Compose Go SDK and docker/cli to go.mod: add github.com/docker/compose/v2 and github.com/docker/cli; run go mod tidy; pin github.com/docker/cli to v28.5.2+incompatible if needed (e.g. when using Compose v5) for compatibility with existing github.com/docker/docker per plan.md
+- [x] T002 [P] Add Docker Compose Go SDK and docker/cli to go.mod: add github.com/docker/compose/v2 and github.com/docker/cli; run go mod tidy; pin github.com/docker/cli to v28.5.2+incompatible if needed (e.g. when using Compose v5) for compatibility with existing github.com/docker/docker per plan.md
 
 ---
 
@@ -118,7 +118,7 @@
 ### Implementation for User Story 4
 
 - [x] T023 [US4] Add optional callback `OnParentContainerGone func(parentName string)` to `recovery.Flow` in internal/recovery/restart.go; when adding parent ID to unrestartable set with reason **container_gone** or **marked_for_removal**, invoke the callback with parentName if non-nil; document in Flow struct and method docstrings
-- [ ] T024 [US4] Replace exec-based auto-recreate with Docker Compose Go SDK in cmd/watch-dog/main.go: when autoRecreate && composePath != "" create Compose API service at startup via compose.NewComposeService(dockerCLI) with dockerCLI from command.NewDockerCli() and Initialize(flags.ClientOptions{}); on init failure log warning and disable auto-recreate; in OnParentContainerGone resolve parent container name to service name via discovery.ContainerNameToServiceName(composePath); call SDK LoadProject(ctx, api.ProjectLoadOptions{ConfigPaths: []string{composePath}, WorkingDir: filepath.Dir(composePath), ProjectName: os.Getenv("COMPOSE_PROJECT_NAME")}); call SDK Up(ctx, project, api.UpOptions{Create: api.CreateOptions{Services: []string{serviceName}, Recreate: "force"}, Start: api.StartOptions{Services: []string{serviceName}}}); run in goroutine with existing timeout; log INFO on trigger/success, ERROR on failure; remove all exec-based docker compose / docker-compose invocation and fallback
+- [x] T024 [US4] Replace exec-based auto-recreate with Docker Compose Go SDK in cmd/watch-dog/main.go: when autoRecreate && composePath != "" create Compose API service at startup via compose.NewComposeService(dockerCLI) with dockerCLI from command.NewDockerCli() and Initialize(flags.ClientOptions{}); on init failure log warning and disable auto-recreate; in OnParentContainerGone resolve parent container name to service name via discovery.ContainerNameToServiceName(composePath); call SDK LoadProject(ctx, api.ProjectLoadOptions{ConfigPaths: []string{composePath}, WorkingDir: filepath.Dir(composePath), ProjectName: os.Getenv("COMPOSE_PROJECT_NAME")}); call SDK Up(ctx, project, api.UpOptions{Create: api.CreateOptions{Services: []string{serviceName}, Recreate: "force"}, Start: api.StartOptions{Services: []string{serviceName}}}); run in goroutine with existing timeout; log INFO on trigger/success, ERROR on failure; remove all exec-based docker compose / docker-compose invocation and fallback
 - [x] T025 [US4] Log at INFO when auto-recreate is triggered: parent name, service name (if resolved), compose path, and that the monitor will re-discover on next cycle in cmd/watch-dog/main.go
 - [x] T026 [US4] Ensure auto-recreate runs only for **parent** and only for **container_gone** or **marked_for_removal** (not for dependents, not for dependency_missing); callback is invoked only from the parent-restart-failure path with those reasons in internal/recovery/restart.go
 - [x] T027 [US4] Verify specs/005-fix-recovery-stale-container/contracts/recovery-unrestartable-behavior.md and quickstart.md describe SDK-based auto-recreate (no docker or docker-compose binary required); update README Configuration table with WATCHDOG_AUTO_RECREATE if not already present
@@ -210,7 +210,7 @@ T027 (Verify contract/quickstart) in parallel with T024
 
 - **Per user story**: US1: 6 tasks (1 optional test). US2: 4. US3: 2. US4: 5 (callback + SDK implementation + logging + scope + contract/quickstart).
 - **Suggested MVP scope**: Phase 1 + Phase 2 + Phase 3 (User Story 1) = T001, T003–T011.
-- **Remaining work**: T002 (Add Compose SDK deps), T024 (Replace exec-based auto-recreate with Compose SDK in cmd/watch-dog/main.go).
+- **Remaining work**: None; T002 and T024 are complete.
 
 ---
 
