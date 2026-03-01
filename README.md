@@ -176,12 +176,6 @@ docker run -d --name watch-dog \
   watch-dog
 ```
 
-## Spec and plan
-
-- [Feature spec](specs/001-container-health-monitor/spec.md)
-- [Implementation plan](specs/001-container-health-monitor/plan.md)
-- [Tasks](specs/001-container-health-monitor/tasks.md)
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
