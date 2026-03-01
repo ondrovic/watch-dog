@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -11,13 +12,20 @@ import (
 
 // fakeClient records Restart and Inspect calls for tests.
 type fakeClient struct {
-	mu      sync.Mutex
-	restarts []string
-	inspect  map[string]string // containerID -> health to return
+	mu              sync.Mutex
+	restarts        []string
+	inspect         map[string]string // containerID -> health to return
+	nextRestartErr  error              // if set, Restart returns it once and clears it
 }
 
 func (c *fakeClient) Restart(ctx context.Context, containerID string) error {
 	c.mu.Lock()
+	if c.nextRestartErr != nil {
+		err := c.nextRestartErr
+		c.nextRestartErr = nil
+		c.mu.Unlock()
+		return err
+	}
 	c.restarts = append(c.restarts, containerID)
 	c.mu.Unlock()
 	return nil
@@ -71,7 +79,7 @@ func TestRestartDependents_dependentCooldownAllowsRestartAfterWindow(t *testing.
 	fake := &fakeClient{inspect: make(map[string]string)}
 	flow := &Flow{
 		Client:                   fake,
-		DependentRestartCooldown: 50 * time.Millisecond,
+		DependentRestartCooldown: 20 * time.Millisecond,
 	}
 	parentToDeps := discovery.ParentToDependents{
 		"parent1": {"dep-a"},
@@ -82,12 +90,35 @@ func TestRestartDependents_dependentCooldownAllowsRestartAfterWindow(t *testing.
 		t.Fatalf("first call: got %d restarts, want 1", n)
 	}
 
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	flow.RestartDependents(ctx, "parent1", &parentToDeps, "")
 	got := fake.getRestarts()
 	if len(got) != 2 {
 		t.Errorf("after cooldown elapsed: got %d restarts %v, want 2", len(got), got)
+	}
+}
+
+func TestRestartDependents_failedRestartClearsCooldown(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeClient{inspect: make(map[string]string), nextRestartErr: errors.New("fake restart failure")}
+	flow := &Flow{
+		Client:                   fake,
+		DependentRestartCooldown: 2 * time.Second,
+	}
+	parentToDeps := discovery.ParentToDependents{
+		"parent1": {"dep-a"},
+	}
+
+	flow.RestartDependents(ctx, "parent1", &parentToDeps, "")
+	if got := fake.getRestarts(); len(got) != 0 {
+		t.Fatalf("after first RestartDependents (Restart failed): got %d restarts %v, want 0", len(got), got)
+	}
+
+	flow.RestartDependents(ctx, "parent1", &parentToDeps, "")
+	got := fake.getRestarts()
+	if len(got) != 1 {
+		t.Errorf("after second RestartDependents: got %d restarts %v, want 1 (cooldown was cleared)", len(got), got)
 	}
 }
 

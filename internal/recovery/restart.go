@@ -66,6 +66,22 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 	}
 }
 
+// shouldRestartDependent reports whether the dependent name may be restarted under cooldown,
+// and if so updates the last-restart timestamp. Caller must hold no locks.
+func (f *Flow) shouldRestartDependent(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lastDependentRestart == nil {
+		f.lastDependentRestart = make(map[string]time.Time)
+	}
+	last := f.lastDependentRestart[name]
+	if !last.IsZero() && time.Since(last) < f.DependentRestartCooldown {
+		return false
+	}
+	f.lastDependentRestart[name] = time.Now()
+	return true
+}
+
 // RestartDependents restarts all containers that list parentName in depends_on,
 // one at a time in deterministic order (sorted by name). If selfName is non-empty
 // and present in the list, it is restarted last so in-flight operations are not canceled.
@@ -96,19 +112,9 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 	for _, name := range ordered {
 		doRestart := true
 		if f.DependentRestartCooldown > 0 {
-			func() {
-				f.mu.Lock()
-				defer f.mu.Unlock()
-				if f.lastDependentRestart == nil {
-					f.lastDependentRestart = make(map[string]time.Time)
-				}
-				last := f.lastDependentRestart[name]
-				if !last.IsZero() && time.Since(last) < f.DependentRestartCooldown {
-					doRestart = false
-					return
-				}
-				f.lastDependentRestart[name] = time.Now()
-			}()
+			if !f.shouldRestartDependent(name) {
+				doRestart = false
+			}
 			if !doRestart {
 				docker.LogDebug("skip dependent restart, within cooldown", "dependent", name, "parent", parentName)
 				continue

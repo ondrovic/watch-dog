@@ -185,12 +185,32 @@ func main() {
 			// wait completed; proceed
 		}
 		docker.LogInfo("initial discovery complete, recovery enabled")
-		parentToDeps, err := discovery.BuildParentToDependents(ctx, cli)
-		if err != nil {
-			docker.LogError("startup reconciliation: build discovery", "error", err)
-			return
+		var built discovery.ParentToDependents
+		var lastErr error
+		backoff := 2 * time.Second
+		for attempt := 0; attempt < 5; attempt++ {
+			if ctx.Err() != nil {
+				return
+			}
+			var buildErr error
+			built, buildErr = discovery.BuildParentToDependents(ctx, cli)
+			if buildErr == nil {
+				parentToDeps = built
+				runStartupReconciliation(ctx, cli, &parentToDeps, flow, cooldown, selfName)
+				return
+			}
+			lastErr = buildErr
+			docker.LogError("startup reconciliation: build discovery", "error", buildErr, "attempt", attempt+1)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
+			}
 		}
-		runStartupReconciliation(ctx, cli, &parentToDeps, flow, cooldown, selfName)
+		docker.LogError("startup reconciliation: gave up after retries, skipping runStartupReconciliation", "error", lastErr)
 	}()
 
 	healthCh := make(chan docker.HealthEvent, 8)
