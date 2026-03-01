@@ -13,6 +13,8 @@ Discovery is **only** from the compose file; the previous label-based `depends_o
   - `COMPOSE_FILE` — path(s); if multiple (colon-separated), the first path is used.
 - **When unset**: No compose-based discovery; the monitor runs but will not treat any container as a parent (no restarts).
 
+- **Optional**: `WATCHDOG_DEPENDENT_RESTART_COOLDOWN` — duration (e.g. `90s`) for the dependent restart cooldown. When a container has multiple parents, the monitor skips restarting it again if it was already restarted within this window (at most one restart per dependent per cooldown). Default is 90s if unset or invalid.
+
 ---
 
 ## depends_on format (root-level per service)

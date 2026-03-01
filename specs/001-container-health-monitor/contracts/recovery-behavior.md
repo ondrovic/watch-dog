@@ -16,15 +16,15 @@
 
 1. **Restart parent**: The monitor restarts the container that became unhealthy (single restart call).
 2. **Wait for healthy**: The monitor waits until that container’s health status is reported as `healthy`, or until a configured timeout (e.g. 5 minutes). It does **not** restart any dependents until this step succeeds (parent healthy or timeout without restarting dependents).
-3. **Restart dependents**: After the parent is healthy, the monitor restarts every container that lists this parent in its `depends_on` label. Order among multiple dependents is not specified.
+3. **Restart dependents**: After the parent is healthy, the monitor restarts every container that lists this parent in its `depends_on` label. Order among multiple dependents is deterministic (e.g. sorted by name). **Dependent restart cooldown**: to avoid restarting the same dependent multiple times when several of its parents recover in quick succession, the monitor skips restarting a dependent if it was already restarted within a configurable cooldown (e.g. `WATCHDOG_DEPENDENT_RESTART_COOLDOWN`, default 90s). At most one restart per dependent per cooldown window is applied.
 
 ---
 
 ## Idempotency and errors
 
-- **Restart**: Restart is idempotent (Docker restart on already-running or stopped container is valid). A dependent that is already restarting or stopped may still be sent a restart.
+- **Restart**: Restart is idempotent (Docker restart on already-running or stopped container is valid). A dependent that is already restarting or stopped may still be sent a restart (unless skipped by cooldown).
 - **Missing/mismatched names**: If `depends_on` references a container that does not exist on the host, that dependency is ignored. The monitor does not fail or restart dependents for non-existent parents.
-- **Multiple parents**: If container C lists parents A and B, and A becomes unhealthy, the monitor runs the sequence for A (restart A → wait healthy → restart C). If B later becomes unhealthy, it runs the same for B (restart B → wait healthy → restart C). C may be restarted more than once in a short window; this is acceptable.
+- **Multiple parents**: If container C lists parents A and B, and A becomes unhealthy, the monitor runs the sequence for A (restart A → wait healthy → restart C if not in cooldown). If B later becomes unhealthy, it runs the same for B (restart B → wait healthy → restart C if not in cooldown). With dependent cooldown, C is restarted at most once per cooldown window when both A and B recover in quick succession.
 
 ---
 
