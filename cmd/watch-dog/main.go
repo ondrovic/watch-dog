@@ -20,6 +20,7 @@ import (
 
 var recoveryCooldown time.Duration
 var initialDiscoveryWait time.Duration
+var dependentRestartCooldown time.Duration
 
 // initialDiscoveryPhaseEnd is set after first discovery; recovery is gated until time.Now() > initialDiscoveryPhaseEnd.
 var initialDiscoveryPhaseEnd time.Time
@@ -57,6 +58,23 @@ func init() {
 			d = defaultInitialDiscoveryWait
 		}
 		initialDiscoveryWait = d
+	}
+
+	const defaultDependentRestartCooldown = 90 * time.Second
+	ds := os.Getenv("WATCHDOG_DEPENDENT_RESTART_COOLDOWN")
+	if ds == "" {
+		dependentRestartCooldown = defaultDependentRestartCooldown
+	} else {
+		d, err := time.ParseDuration(ds)
+		if err != nil || d < 0 {
+			reason := "must be non-negative"
+			if err != nil {
+				reason = err.Error()
+			}
+			docker.LogWarn("invalid WATCHDOG_DEPENDENT_RESTART_COOLDOWN, using default 90s", "value", ds, "error", reason)
+			d = defaultDependentRestartCooldown
+		}
+		dependentRestartCooldown = d
 	}
 }
 
@@ -135,7 +153,10 @@ func main() {
 	initialDiscoveryPhaseEnd = time.Now().Add(initialDiscoveryWait)
 	docker.LogInfo("initial discovery started", "wait", initialDiscoveryWait.String())
 
-	flow := &recovery.Flow{Client: cli}
+	flow := &recovery.Flow{
+		Client:                   cli,
+		DependentRestartCooldown: dependentRestartCooldown,
+	}
 	cooldown := &recoveryCooldownState{}
 	selfName := os.Getenv("WATCHDOG_CONTAINER_NAME")
 	if selfName == "" {

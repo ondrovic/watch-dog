@@ -6,6 +6,7 @@ A standalone Docker container that monitors parent/child container health and re
 
 - **Compose-native**: Discovers parent/child relationships from the compose file’s **root-level `depends_on`** (short or long form); no custom labels.
 - **Correct order**: Restarts the parent first, waits until it is healthy, then restarts dependents (swarm-like behavior without Swarm).
+- **Multi-parent mitigation**: Containers with multiple `depends_on` parents are restarted at most once per cooldown window (default 90s) when several parents recover in quick succession, avoiding redundant restarts.
 - **Event-driven**: Uses Docker `health_status` events; optional 60s polling fallback for robustness.
 - **Startup reconciliation**: On start, treats already-unhealthy parents and runs the full recovery sequence.
 
@@ -89,6 +90,7 @@ Use a `.env` file or export these variables so Compose can substitute them (e.g.
 | `WATCHDOG_COMPOSE_PATH` | Path inside the container to the compose file (e.g. `/app/docker-compose.yml`). |
 | `COMPOSE_FILE` | Alternative; if set, the first path in a colon-separated list is used. |
 | `WATCHDOG_CONTAINER_NAME` | Optional. When the monitor is a dependent of a recovered parent (e.g. in `depends_on`), set this to the monitor’s container name (e.g. `watch-dog`). The monitor will restart **all other** dependents first, then itself last, so in-flight restarts are not canceled. If unset, dependents are restarted in deterministic (e.g. alphabetical) order with no special handling for the monitor. |
+| `WATCHDOG_DEPENDENT_RESTART_COOLDOWN` | Optional. When a container has multiple parents (e.g. `depends_on: [qbittorrent, prowlarr]`), the monitor skips restarting it again if it was already restarted within this duration. Default: `90s`. Set to `0` to disable (restart after every parent recovery). Invalid values fall back to 90s with a warning. See [recovery-behavior](specs/001-container-health-monitor/contracts/recovery-behavior.md). |
 | `WATCHDOG_INITIAL_DISCOVERY_WAIT` | Optional. Duration to wait after the first discovery cycle before the monitor may run recovery (e.g. `30s`, `2m`, `5m`). Default: `60s`. Use when bringing the stack up with `docker compose up` so the monitor does not restart dependents during initial startup; set to at least how long your stack needs to become ready (e.g. `120s` or `5m`). Invalid or non-positive values fall back to 60s with a warning in logs. |
 
 #### Logging: LOG_LEVEL and LOG_FORMAT

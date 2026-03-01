@@ -5,6 +5,7 @@ package recovery
 import (
 	"context"
 	"slices"
+	"sync"
 	"time"
 
 	"watch-dog/internal/discovery"
@@ -13,10 +14,22 @@ import (
 
 const defaultWaitHealthyTimeout = 5 * time.Minute
 
+// dockerClient is the subset of Docker API used by Flow (for testing with fakes).
+type dockerClient interface {
+	Restart(ctx context.Context, containerID string) error
+	Inspect(ctx context.Context, containerID string) (health string, labels map[string]string, err error)
+}
+
 // Flow runs the full recovery sequence: restart parent, wait until healthy, restart dependents.
 type Flow struct {
 	// Client is the Docker client used for restart and inspect.
-	Client *docker.Client
+	Client dockerClient
+	// DependentRestartCooldown is the minimum time between restarts of the same dependent (0 = disabled).
+	// When multiple parents of the same dependent recover in quick succession, the dependent is restarted at most once per this window.
+	DependentRestartCooldown time.Duration
+
+	mu                   sync.Mutex
+	lastDependentRestart map[string]time.Time
 }
 
 // RestartParent restarts the container by ID or name (idempotent).
@@ -56,6 +69,7 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 // RestartDependents restarts all containers that list parentName in depends_on,
 // one at a time in deterministic order (sorted by name). If selfName is non-empty
 // and present in the list, it is restarted last so in-flight operations are not canceled.
+// If DependentRestartCooldown is set, a dependent that was restarted within that window is skipped (at most one restart per dependent per cooldown).
 // discovery may be nil; then no dependents are restarted.
 func (f *Flow) RestartDependents(ctx context.Context, parentName string, discovery *discovery.ParentToDependents, selfName string) {
 	if discovery == nil {
@@ -80,8 +94,37 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 		}
 	}
 	for _, name := range ordered {
+		doRestart := true
+		if f.DependentRestartCooldown > 0 {
+			func() {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if f.lastDependentRestart == nil {
+					f.lastDependentRestart = make(map[string]time.Time)
+				}
+				last := f.lastDependentRestart[name]
+				if !last.IsZero() && time.Since(last) < f.DependentRestartCooldown {
+					doRestart = false
+					return
+				}
+				f.lastDependentRestart[name] = time.Now()
+			}()
+			if !doRestart {
+				docker.LogDebug("skip dependent restart, within cooldown", "dependent", name, "parent", parentName)
+				continue
+			}
+		}
 		if err := f.Client.Restart(ctx, name); err != nil {
 			docker.LogError("restart dependent", "dependent", name, "parent", parentName, "error", err)
+			if f.DependentRestartCooldown > 0 {
+				func() {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					if f.lastDependentRestart != nil {
+						delete(f.lastDependentRestart, name)
+					}
+				}()
+			}
 		} else {
 			docker.LogInfo("restarted dependent", "dependent", name, "parent", parentName)
 		}
