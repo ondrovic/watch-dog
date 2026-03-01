@@ -36,6 +36,9 @@ type Flow struct {
 	// Unrestartable holds container IDs for which restart (or inspect during wait-for-healthy) has failed with an unrestartable error.
 	// If nil, unrestartable tracking is disabled.
 	Unrestartable *Set
+	// OnParentContainerGone, if non-nil, is called when a parent is added to Unrestartable with reason container_gone (no such container).
+	// Used for optional auto-recreate (e.g. run docker compose up -d <parentName>) so the operator does not have to run compose by hand (FR-008).
+	OnParentContainerGone func(parentName string)
 
 	mu                   sync.Mutex
 	lastDependentRestart map[string]time.Time
@@ -141,9 +144,12 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 				depID = id
 			}
 		}
-		if f.Unrestartable != nil && f.Unrestartable.Contains(depID) {
+		if nameToID != nil && f.Unrestartable != nil && f.Unrestartable.Contains(depID) {
 			docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping dependent %q (parent %s), container unrestartable", name, parentName), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID))
 			continue
+		}
+		if nameToID == nil && f.Unrestartable != nil {
+			docker.LogInfoRecovery(fmt.Sprintf("recovery: nameToID absent, skipping unrestartable check for dependent %q (parent %s)", name, parentName), "dependent", name, "parent", parentName)
 		}
 		if f.DependentRestartCooldown > 0 && !f.shouldRestartDependent(name) {
 			docker.LogDebug("skip dependent restart, within cooldown", "dependent", name, "parent", parentName)
@@ -187,6 +193,10 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName, reason
 			f.Unrestartable.Add(parentID, nil)
 			reasonStr := unrestartableReason(err)
 			docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart parent %q (%s), will not retry this container ID", parentName, reasonStr), "parent", parentName, "id_short", util.ShortID(parentID), "reason", reasonStr, "error", err)
+			// Invoke callback only for parent container_gone (not for dependents, not for marked_for_removal or dependency_missing).
+			if reasonStr == "container_gone" && f.OnParentContainerGone != nil {
+				f.OnParentContainerGone(parentName)
+			}
 			return
 		}
 		docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart parent %q", parentName), "parent", parentName, "error", err)

@@ -9,7 +9,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +26,7 @@ import (
 var recoveryCooldown time.Duration
 var initialDiscoveryWait time.Duration
 var dependentRestartCooldown time.Duration
+var autoRecreate bool
 
 // initialDiscoveryPhaseEnd is set after first discovery; recovery is gated until time.Now() > initialDiscoveryPhaseEnd.
 var initialDiscoveryPhaseEnd time.Time
@@ -79,6 +83,9 @@ func init() {
 		}
 		dependentRestartCooldown = d
 	}
+
+	ar := strings.TrimSpace(strings.ToLower(os.Getenv("WATCHDOG_AUTO_RECREATE")))
+	autoRecreate = ar == "true" || ar == "1" || ar == "yes"
 }
 
 // isInitialDiscoveryComplete returns true after the initial discovery phase (first discovery + wait) has elapsed.
@@ -210,6 +217,21 @@ func main() {
 		Client:                   cli,
 		DependentRestartCooldown: dependentRestartCooldown,
 		Unrestartable:            recovery.NewSet(0),
+	}
+	composePath := discovery.ComposePathFromEnv()
+	if autoRecreate && composePath != "" {
+		flow.OnParentContainerGone = func(parentName string) {
+			docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "compose_path", composePath)
+			dir := filepath.Dir(composePath)
+			if dir == "" || dir == "." {
+				dir, _ = os.Getwd()
+			}
+			cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d", parentName)
+			cmd.Dir = dir
+			if err := cmd.Run(); err != nil {
+				docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "error", err)
+			}
+		}
 	}
 	cooldown := &recoveryCooldownState{}
 	lastKnownParents := &lastKnownParentIDs{}

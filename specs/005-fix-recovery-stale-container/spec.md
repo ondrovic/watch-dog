@@ -66,6 +66,14 @@ When recovery fails in a way that indicates the container cannot be restarted (e
 
 ---
 
+### User Story 4 - Optional auto-recreate when parent is gone (Priority: P2, optional)
+
+When the monitor marks a **parent** as unrestartable with reason container_gone (no such container), the operator may prefer the monitor to trigger recreation of that service via the compose file (e.g. `docker compose up -d <service_name>`) so they do not have to run compose by hand. When this option is enabled (e.g. WATCHDOG_AUTO_RECREATE), the monitor runs compose up for that parent service name; recovery then proceeds when discovery sees the new container ID.
+
+**Acceptance**: With the option enabled, remove a monitored parent; verify one failure log (container_gone), then a log that auto-recreate was triggered, then on next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
+
+---
+
 ### Edge Cases
 
 - What happens when an external updater (e.g. watchtower, wud, ouroboros) replaces several monitored containers in sequence? Each replaced container may be seen as stopped or unhealthy; the monitor must not retry restart for the old (stale) IDs indefinitely. After the updater has created new instances, the monitor should be able to pick up and monitor those new instances so the service is considered recovered.
@@ -80,7 +88,7 @@ When recovery fails in a way that indicates the container cannot be restarted (e
 - "Container no longer exists," "marked for removal," and "cannot be started" (or equivalent runtime responses) are treated as unrecoverable for that specific container identity; the monitor may re-discover containers by service name or composition so that the same logical service can be monitored again after recreation.
 - A common trigger is an external container updater (e.g. watchtower, wud, ouroboros) that replaces containers (new image → new container → old container stopped/removed); the monitor may run alongside such an updater and must handle stale identities without endless retries. This feature addresses the scenario described in GitHub issue #5 (child/dependent container when parent is auto-updated).
 - Dependency order (e.g. parent before dependent, or network container before container that joins it) may require the monitor to recover or re-discover in order; the fix does not require implementing full orchestration, but must avoid endless retries when a dependency is missing.
-- Operators may recreate containers manually or via composition or via an updater; the monitor's role is to observe, attempt recovery, and avoid retry loops—not necessarily to create containers itself (that may be out of scope depending on how the product is defined).
+- Operators may recreate containers manually or via composition or via an updater; the monitor's role is to observe, attempt recovery, and avoid retry loops. Optionally (when configured), the monitor MAY trigger recreation of a parent service via compose when that parent is marked container_gone so the operator does not have to run compose by hand.
 - Logging and back-off behavior must be observable so that operators can confirm retries are bounded and understand failure reasons.
 - The poll interval (referred to in success criteria) is implementation-defined (e.g. from code or environment); the spec does not mandate a specific value.
 
@@ -95,6 +103,7 @@ When recovery fails in a way that indicates the container cannot be restarted (e
 - **FR-005**: The system MUST provide operators with identifiable failure reasons when recovery fails (e.g. container gone, marked for removal, dependency missing), so that logs support troubleshooting and manual intervention.
 - **FR-006**: When the system limits or stops retries for a failed recovery, it MUST continue to monitor other containers and MUST still attempt recovery for them when appropriate; one unrestartable container must not block monitoring of the rest.
 - **FR-007**: When the monitor observes that a parent has a new container ID and is healthy (e.g. after re-discovery, such as when an updater replaced the parent), the system MUST proactively restart all dependents of that parent so dependents that were failing due to the missing (old) parent's network can re-bind to the new parent and the child/dependent comes back online. The same dependent restart cooldown as in normal recovery (e.g. at most one restart per dependent per cooldown window) MUST apply to these proactive restarts.
+- **FR-008** (optional): When configured (e.g. via WATCHDOG_AUTO_RECREATE), when a **parent** is marked unrestartable with reason container_gone (no such container), the system MAY trigger recreation of that service via the compose file (e.g. `docker compose up -d <service_name>`) so the operator does not have to run compose by hand; recovery then proceeds when discovery sees the new container ID. This applies only to parent container_gone, not to dependents or to marked_for_removal/dependency_missing.
 
 ### Key Entities
 

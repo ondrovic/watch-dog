@@ -11,7 +11,7 @@ This feature stops the monitor from retrying the same failed recovery indefinite
 
 ## What changes for operators
 
-- **No config**: No new environment variables or config files. Behavior is automatic.
+- **Config**: Optional env `WATCHDOG_AUTO_RECREATE` (`true`/`1`/`yes`): when a parent is marked unrestartable with reason **container_gone**, the monitor can run `docker compose up -d <parentName>` so the service comes back without manual intervention; the monitor re-discovers on the next cycle. Requires a compose path. If unset or disabled, behavior is as before (no auto-recreate).
 - **Logs**: When a restart fails because the container is gone, marked for removal, or a dependency is missing, you will see a clear error that recovery failed and that the monitor will not retry this container ID. When the monitor skips recovery because the container is already known unrestartable, you will see a skip message (INFO or DEBUG) so you know retries are limited.
 - **Recovery after replace**: When the same service is recreated (e.g. new container ID after an updater run), the monitor will pick it up on the next discovery and run recovery for it as normal.
 - **Proactive dependent restart**: When only the **parent** is replaced by an updater (new parent ID, parent healthy), the monitor will proactively restart that parent's dependents within one poll interval or next discovery so the dependent (child) comes back online without needing to recreate the dependent (SC-005).
@@ -48,6 +48,12 @@ This feature stops the monitor from retrying the same failed recovery indefinite
 1. **Setup**: Compose with a parent (e.g. vpn) and at least one dependent (e.g. dler) that uses the parent's network. Run the monitor and an updater (e.g. watchtower, wud, ouroboros).
 2. **Trigger**: Let the updater replace **only the parent** (vpn gets new image and new container ID; dependent dler is not updated and may have been failing with "joining network namespace ... No such container" for the old vpn).
 3. **Expected**: Within one poll interval or on the next discovery after the new parent is healthy, the monitor detects that the parent has a new ID and is healthy, then **proactively restarts the dependents** of that parent. The dependent (child) comes back online without requiring the dependent to be recreated (SC-005). Logs indicate proactive restart (e.g. parent has new ID, restarting dependents).
+
+## Optional: auto-recreate when parent is gone (WATCHDOG_AUTO_RECREATE)
+
+1. **Setup**: Set `WATCHDOG_AUTO_RECREATE=true` (or `1`/`yes`) and ensure `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`) is set. Run the monitor with at least one parent.
+2. **Trigger**: Remove the parent container (e.g. `docker rm -f <parent>`). Trigger recovery (event or poll).
+3. **Expected**: One failure log (container_gone), then an INFO log that auto-recreate was triggered (parent name, compose path, re-discover on next cycle). On the next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
 
 ## Optional: run with an updater (e.g. watchtower, wud, ouroboros)
 

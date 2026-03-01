@@ -10,7 +10,7 @@
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story (US1, US2, US3)
+- **[Story]**: Which user story (e.g. US1, US2, US3, US4)
 - Include exact file paths in descriptions
 
 ## Path Conventions
@@ -118,11 +118,11 @@
 
 ### Implementation for User Story 4
 
-- [ ] T022 [US4] Add optional callback `OnParentContainerGone func(parentName string)` to `recovery.Flow` in internal/recovery/restart.go; when adding parent ID to unrestartable set with reason **container_gone** (in RunFullSequence after Restart failure), invoke the callback with parentName if non-nil; document in Flow struct and method docstrings
-- [ ] T023 [US4] In cmd/watch-dog/main.go read optional env `WATCHDOG_AUTO_RECREATE` (e.g. `true`/`1` to enable); when enabled, set `Flow.OnParentContainerGone` to a function that runs `docker compose -f <composePath> up -d <parentName>` using `discovery.ComposePathFromEnv()` for compose path, and `exec.Command` (or equivalent) with working directory set appropriately (e.g. compose file directory or current dir); skip if compose path is empty
-- [ ] T024 [US4] Log at INFO when auto-recreate is triggered: parent name, compose path, and that the monitor will re-discover on next cycle in cmd/watch-dog/main.go (or where the callback is implemented)
-- [ ] T025 [US4] Ensure auto-recreate runs only for **parent** container_gone (not for dependents, and not for marked_for_removal or dependency_missing); callback is invoked only from the parent-restart-failure path with reason container_gone in internal/recovery/restart.go
-- [ ] T026 [US4] Update specs/005-fix-recovery-stale-container/contracts/recovery-unrestartable-behavior.md (or add a short section) describing optional auto-recreate when container_gone and WATCHDOG_AUTO_RECREATE is set; update quickstart.md and README Configuration table with WATCHDOG_AUTO_RECREATE
+- [x] T022 [US4] Add optional callback `OnParentContainerGone func(parentName string)` to `recovery.Flow` in internal/recovery/restart.go; when adding parent ID to unrestartable set with reason **container_gone** (in RunFullSequence after Restart failure), invoke the callback with parentName if non-nil; document in Flow struct and method docstrings
+- [x] T023 [US4] In cmd/watch-dog/main.go read optional env `WATCHDOG_AUTO_RECREATE` (e.g. `true`/`1` to enable); when enabled, set `Flow.OnParentContainerGone` to a function that runs `docker compose -f <composePath> up -d <parentName>` using `discovery.ComposePathFromEnv()` for compose path, and `exec.Command` (or equivalent) with working directory set appropriately (e.g. compose file directory or current dir); skip if compose path is empty
+- [x] T024 [US4] Log at INFO when auto-recreate is triggered: parent name, compose path, and that the monitor will re-discover on next cycle in cmd/watch-dog/main.go (or where the callback is implemented)
+- [x] T025 [US4] Ensure auto-recreate runs only for **parent** container_gone (not for dependents, and not for marked_for_removal or dependency_missing); callback is invoked only from the parent-restart-failure path with reason container_gone in internal/recovery/restart.go
+- [x] T026 [US4] Update specs/005-fix-recovery-stale-container/contracts/recovery-unrestartable-behavior.md (or add a short section) describing optional auto-recreate when container_gone and WATCHDOG_AUTO_RECREATE is set; update quickstart.md and README Configuration table with WATCHDOG_AUTO_RECREATE
 
 **Checkpoint**: With WATCHDOG_AUTO_RECREATE enabled, removing a parent triggers one failure log, then compose up for that service, then recovery of the new container on next discovery.
 
@@ -240,7 +240,7 @@ T026 (docs) in parallel with T023–T025
 
 - All tasks use the required format: `- [ ] Txxx [P?] [US?] Description with file path`.
 - [P] used where tasks touch different files and have no ordering requirement.
-- [US1]/[US2]/[US3] used for Phase 3–5 implementation tasks only.
+- [US1]/[US2]/[US3] used for Phase 3–5 implementation tasks; [US4] for Phase 7 (auto-recreate).
 - **Manual simulation (T017–T018)**: Provides a repeatable way to simulate the failure states (no such container, marked for removal, dependency missing) so operators and developers can verify that the system properly recovers (bounded retries, skip logs, recovery after recreate) without relying on an external updater.
 - **Docstrings (T019)**: All new or modified exported symbols in internal/recovery (errors.go, unrestartable.go, restart.go) must have Go docstrings; T002, T003, T004, T011, T012 call out docstrings for their respective files; T019 is a final pass to ensure nothing is missing.
 - **Proactive restart (T020–T021)**: Implements FR-007 / SC-005; when parent has new ID and is healthy (e.g. after updater replace), monitor proactively restarts that parent's dependents so the child comes back online (GitHub issue #5). Same cooldown as normal recovery.

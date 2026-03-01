@@ -57,3 +57,14 @@ When an external updater (e.g. watchtower, wud, ouroboros) replaces only the **p
 - **Action**: Restart **dependents only** (do not restart the parent). Use the same order and logic as normal recovery (RestartDependents); the same **dependent restart cooldown** (e.g. WATCHDOG_DEPENDENT_RESTART_COOLDOWN) applies, so at most one restart per dependent per cooldown window.
 - **Update state**: After triggering proactive restart for a parent, update the last-known ID for that parent to the current ID so we do not repeatedly trigger on every discovery.
 - **Observability**: Log that proactive restart is running for parent X (parent has new ID, restarting dependents) so operators can verify the behavior (SC-005).
+
+---
+
+## Optional auto-recreate when parent is container_gone (FR-008)
+
+When a **parent** is marked unrestartable with reason **container_gone** (no such container), the monitor may optionally trigger recreation of that service so the operator does not have to run compose by hand.
+
+- **Enable**: Set `WATCHDOG_AUTO_RECREATE` to `true`, `1`, or `yes` (case-insensitive). When enabled and a compose path is available (`WATCHDOG_COMPOSE_PATH` or `COMPOSE_FILE`), the monitor sets an internal callback that runs when a parent is added to the unrestartable set with reason **container_gone**.
+- **Action**: The callback runs `docker compose -f <composePath> up -d <parentName>` with the working directory set to the compose file’s directory (or current directory when appropriate). The monitor does not wait for the command to finish; it continues and will re-discover on the next cycle.
+- **Scope**: The callback is invoked **only** when the failed container is the **parent** and the reason is **container_gone**. It is **not** invoked for dependents, or for reasons such as `marked_for_removal` or `dependency_missing`.
+- **Observability**: When auto-recreate is triggered, the monitor logs at INFO the parent name, compose path, and that it will re-discover on the next cycle. If the `docker compose up` command fails, an error is logged.
