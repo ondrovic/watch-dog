@@ -32,6 +32,3 @@ func IsUnrestartableError(err error) bool {
 
 	return false
 }
-
-	return false
-}
