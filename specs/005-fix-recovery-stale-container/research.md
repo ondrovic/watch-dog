@@ -73,3 +73,13 @@
 **Rationale**: FR-007 and SC-005 require proactive restart of dependents when parent has new ID and is healthy (e.g. after updater replaces parent). Comparing current ID to last-known is the minimal way to detect "parent was replaced"; running only the dependent-restart step (no parent restart) matches the spec. Reusing RestartDependents keeps one code path and ensures cooldown applies.
 
 **Alternatives considered**: Trigger only when parent was previously in unrestartable set (rejected: spec says "when the monitor observes a parent has a new ID and is healthy", not only after a failure). Separate "proactive" cooldown (rejected: clarification said same cooldown as normal recovery).
+
+---
+
+## 8. Auto-recreate via Docker Compose Go SDK (FR-008)
+
+**Decision**: Implement auto-recreate (when a parent is marked unrestartable with reason **container_gone** or **marked_for_removal**) using the **Docker Compose Go SDK** instead of shelling out to `docker compose` or `docker-compose`. The monitor creates a Compose API service at startup (when `WATCHDOG_AUTO_RECREATE` is enabled and compose path is set), then in the OnParentContainerGone callback calls `LoadProject` and `Up` with single-service and force-recreate options. No `docker` or `docker-compose` binary is required.
+
+**Rationale**: In environments where the Docker binary has no Compose V2 plugin (or `docker-compose` is not in PATH), the current exec-based approach fails with errors such as "unknown shorthand flag: 'f' in -f". Using the SDK runs the equivalent of `docker compose -f <path> up -d <service>` in-process, so auto-recreate works without depending on host binaries. The SDK uses the same daemon (via its own client init from env) and provides full compose semantics (project load, up with recreate). See [Compose SDK docs](https://docs.docker.com/compose/compose-sdk/).
+
+**Alternatives considered**: (1) Fix exec invocation ordering — would not help when the host has no Compose plugin and no docker-compose binary. (2) Keep docker-compose fallback only — leaves failure mode when both are missing. (3) Replicate "compose up" with only the Docker Engine API — would require reimplementing compose file parsing, env substitution, networks, and recreate logic; the SDK is the right abstraction.

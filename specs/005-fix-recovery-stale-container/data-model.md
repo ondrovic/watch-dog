@@ -51,3 +51,13 @@ No new persistent storage. This feature adds an **in-memory unrestartable set** 
 | **Last-known parent ID** | A map (parent name → container ID) storing the last container ID seen for each parent. Updated after each discovery when we have a current container list (event path and polling). Used to detect "parent has new ID" (current ID ≠ last-known). |
 | **Detection** | After discovery: for each parent name, current ID = from container list; if current ID != last-known ID for that parent and the parent is healthy, trigger proactive restart of dependents (run RestartDependents only, with same cooldown); then set last-known[parentName] = current ID. On first run, last-known may be empty so current ID is treated as "new" (optional: skip proactive restart on first discovery to avoid restarting all dependents at startup, or allow per spec—spec says "when the monitor observes a parent has a new ID and is healthy"). |
 | **Proactive restart** | Restart dependents of that parent only (no parent restart). Reuse existing RestartDependents logic; same DependentRestartCooldown applies. |
+
+---
+
+## Auto-recreate via Compose SDK (FR-008)
+
+| Concept | Description |
+|--------|-------------|
+| **Compose API service** | When auto-recreate is enabled and compose path is set, the monitor creates a Docker Compose Go SDK service instance at startup (e.g. `compose.NewComposeService(dockerCLI)`). Used only for the OnParentContainerGone callback; no persistent storage. |
+| **Project load** | In the callback, load the project with `LoadProject(ctx, ProjectLoadOptions{ConfigPaths, WorkingDir, ProjectName})` then call `Up(ctx, project, UpOptions{Create: {Services: [serviceName], Recreate: "force"}, Start: {Services: [serviceName]}})`. Equivalent to `docker compose -f <path> up -d <service>` in-process; no docker or docker-compose binary required. |
+| **Service name** | Parent container name is resolved to compose service name via existing `discovery.ContainerNameToServiceName(composePath)` (e.g. container_name "vpn" → service "gluetun"). |

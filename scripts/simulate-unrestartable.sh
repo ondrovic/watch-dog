@@ -7,6 +7,7 @@
 # Usage:
 #   ./scripts/simulate-unrestartable.sh [parent_name]     # print commands only
 #   ./scripts/simulate-unrestartable.sh --run [parent_name]  # run "no such container" steps (destructive)
+#   SERVICE_NAME=compose_service ./scripts/... [parent_name]  # when container_name differs from service key
 
 set -euo pipefail
 PARENT_NAME="${1:-vpn}"
@@ -15,6 +16,8 @@ if [[ "${1:-}" == "--run" ]]; then
 	RUN_MODE=true
 	PARENT_NAME="${2:-vpn}"
 fi
+# Compose expects service name; may differ from container name when container_name: is set.
+SERVICE_NAME="${SERVICE_NAME:-$PARENT_NAME}"
 
 echo "=== 1. No such container ==="
 echo "# Remove the parent so it no longer exists; watch-dog will attempt recovery and then skip."
@@ -25,7 +28,7 @@ else
 	echo "  docker rm -f \"$PARENT_NAME\""
 	echo "  # Then run watch-dog; expect one (or bounded) failure log, then skip messages."
 	echo "# Recreate to verify recovery:"
-	echo "  docker compose up -d $PARENT_NAME"
+	echo "  docker compose up -d $SERVICE_NAME"
 fi
 
 echo ""

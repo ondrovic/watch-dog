@@ -1,37 +1,39 @@
-# Implementation Plan: Fix Recovery When Containers Are Gone or Unrestartable
+# Implementation Plan: Fix Recovery When Containers Are Gone or Unrestartable (Compose SDK)
 
-**Branch**: `005-fix-recovery-stale-container` | **Date**: 2026-03-01 | **Spec**: [spec.md](./spec.md)  
+**Branch**: `005-fix-recovery-stale-container` | **Date**: 2026-03-01 | **Spec**: [spec.md](spec.md)  
 **Input**: Feature specification from `/specs/005-fix-recovery-stale-container/spec.md`
+
+**Note**: This plan updates auto-recreate (FR-008) to use the Docker Compose Go SDK instead of shelling out to `docker` / `docker-compose`, eliminating the "unknown shorthand flag: 'f'" error when the Docker binary has no Compose plugin.
 
 ## Summary
 
-When recovery (restart parent or dependent) fails because the container no longer exists, is marked for removal, or a dependency (e.g. network namespace container) is missing, the monitor currently retries on every subsequent trigger (event or poll) with the same container ID, causing unbounded identical errors. The fix: (1) **Classify** Docker API restart/inspect errors as "unrestartable" (no such container, marked for removal, dependency missing). (2) **Track** container IDs for which restart has failed with an unrestartable error. (3) **Skip** running the full recovery sequence for those IDs until re-discovery yields a different ID for the same logical service (name). (4) **Log** clearly when recovery is skipped due to unrestartable state and when the failure is first detected. (5) **Proactive dependent restart (FR-007)**: When the monitor observes that a parent has a **new** container ID and is healthy (e.g. after re-discovery, such as when an updater replaced the parent), it **proactively restarts all dependents** of that parent so dependents that were failing due to the missing (old) parent's network can re-bind to the new parent; the same dependent restart cooldown as in normal recovery applies. Re-discovery is already in place; to implement (5) the monitor tracks last-known container ID per parent name and, after each discovery, compares current ID to last-known—if different and parent is healthy, run the dependent-restart sequence for that parent (without restarting the parent itself). (6) **Optional auto-recreate (FR-008)**: When WATCHDOG_AUTO_RECREATE is enabled and a parent is marked container_gone, the monitor may run `docker compose up -d <parentName>` (using the compose path from discovery) so the service is recreated without manual operator action; implemented in Phase 7 via an optional callback on Flow (OnParentContainerGone). Addresses [GitHub issue #5](https://github.com/ondrovic/watch-dog/issues/5) (child/dependent when parent is auto-updated).
+- **Primary requirement**: When a parent is marked unrestartable with reason **container_gone** or **marked_for_removal**, optionally trigger recreation of that service so the operator does not have to run compose by hand (FR-008).
+- **Technical approach**: Replace the current exec-based implementation (`docker compose -f <path> up -d <service>` / `docker-compose` fallback) with the **Docker Compose Go SDK**. The equivalent of `compose up -d <service>` runs in-process; no `docker` or `docker-compose` binary is required. Same behavior: load project from compose file, bring up one service (and its dependencies), detach; resolve container name to service name via existing discovery; log trigger/success/failure.
 
 ## Technical Context
 
-**Language/Version**: Go 1.21+ (go.mod may specify 1.25; compatible 1.21+)  
-**Primary Dependencies**: Docker Engine API (github.com/docker/docker/client), standard library, log/slog, gopkg.in/yaml.v3 (compose parsing)  
-**Storage**: N/A (in-memory unrestartable set and last-known parent ID map only; discovery and state from Docker API and compose file)  
-**Testing**: Go test; contract-driven; unit tests alongside packages; extend recovery tests for error classification, skip behavior, and proactive restart  
-**Target Platform**: Linux (Docker host); container image (e.g. GHCR)  
-**Project Type**: CLI / single binary (containerized monitor)  
-**Performance Goals**: Bounded recovery-failure log volume (SC-001); no endless retry loops; proactive restart within one poll or next discovery (SC-005)  
-**Constraints**: Single binary; no persistent config; discovery from compose + runtime; observability via slog (LOG_LEVEL, LOG_FORMAT from env)  
-**Scale/Scope**: One monitor per stack; typical stacks with a small number of parents and dependents; unrestartable set size bounded (e.g. cap or prune by ID no longer in list)
+**Language/Version**: Go 1.21+ (go.mod 1.25; compatible 1.21+)  
+**Primary Dependencies**: Docker Engine API (github.com/docker/docker/client), log/slog, gopkg.in/yaml.v3 (compose parsing). **New for FR-008**: Docker Compose Go SDK (github.com/docker/compose/v2) and github.com/docker/cli for the CLI layer the SDK uses to talk to the daemon; pin docker/cli to v28.5.2+incompatible if using Compose v5 to avoid moby/moby vs docker/docker conflicts.  
+**Storage**: N/A (in-memory unrestartable set and last-known parent ID map only; discovery and state from Docker API and compose file).  
+**Testing**: go test; contract-driven; extend tests when touching contracts.  
+**Target Platform**: Linux with Docker daemon (socket or DOCKER_HOST).  
+**Project Type**: CLI (single binary in cmd/watch-dog).  
+**Performance Goals**: Bounded retries (SC-001); auto-recreate runs in background with timeout.  
+**Constraints**: Single binary, no persistent config; no modification of files outside the project.  
+**Scale/Scope**: In-memory set bounded (e.g. max 100 IDs, pruning); one compose project path per process.
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 | Principle | Status | Notes |
-|-----------|--------|--------|
-| I. Contract-first behavior | PASS | New/updated contracts for recovery when restart fails (unrestartable) and for proactive dependent restart (FR-007); contracts/ in this feature. |
-| II. Spec-branch workflow | PASS | Work on branch `005-fix-recovery-stale-container`; spec dir `specs/005-fix-recovery-stale-container`. |
-| III. Recovery order | PASS | Unchanged: parent first, then dependents one at a time. Unrestartable handling only skips or bounds retries. Proactive restart runs dependents only (parent already healthy); same order as normal dependent restart. |
-| IV. Observability | PASS | Log unrestartable detection, skip (with reason), identifiable failure reasons, and proactive restart (parent has new ID, restarting dependents) per FR-005. |
-| V. Simplicity and scope | PASS | In-memory set and last-known-ID map; error classification by message; no new external deps; no features outside spec. |
-| No automated commits | PASS | Agent may stage only; no git commit. |
-| Stack / layout | PASS | cmd/watch-dog, internal/ (docker, discovery, recovery); existing layout. |
+|-----------|--------|-------|
+| I. Contract-first behavior | PASS | FR-008 behavior defined in contracts/recovery-unrestartable-behavior.md; plan updates contract to SDK-based auto-recreate. |
+| II. Spec-branch workflow | PASS | Active branch `005-fix-recovery-stale-container`; spec dir resolved. |
+| III. Recovery order | PASS | Parent-first, then dependents; auto-recreate triggers after parent marked unrestartable, does not change recovery order. |
+| IV. Observability | PASS | Structured logging (INFO trigger/success, ERROR on failure); same semantics as current auto-recreate. |
+| V. Simplicity and scope | PASS | SDK replaces exec; single in-process path; no new user-facing config (WATCHDOG_AUTO_RECREATE unchanged). |
+| Stack / Technologies | PASS | Add Compose SDK to Active Technologies; single binary, internal/ layout unchanged. |
 
 ## Project Structure
 
@@ -40,32 +42,35 @@ When recovery (restart parent or dependent) fails because the container no longe
 ```text
 specs/005-fix-recovery-stale-container/
 ├── plan.md              # This file
-├── research.md          # Phase 0
-├── data-model.md        # Phase 1
-├── quickstart.md        # Phase 1
-├── contracts/           # Phase 1 (recovery unrestartable + proactive dependent restart)
-└── tasks.md             # Phase 2 (/speckit.tasks - not created by plan)
+├── research.md           # Phase 0 (includes Compose SDK decision)
+├── data-model.md        # Phase 1 (includes auto-recreate via SDK)
+├── quickstart.md        # Phase 1 (updated for SDK-based auto-recreate)
+├── contracts/           # recovery-unrestartable-behavior.md (FR-008 updated)
+└── tasks.md             # Phase 2 (/speckit.tasks)
 ```
 
 ### Source Code (repository root)
 
 ```text
 cmd/watch-dog/
-└── main.go              # Pass nameToID into tryRecoverParent/Flow.RunFullSequence; call prune after ListContainers; after discovery, when parent has new ID and healthy call flow.RestartDependents for that parent (proactive restart per FR-007)
+└── main.go              # Replace exec-based auto-recreate with Compose SDK init + Up()
 
 internal/
-├── docker/              # Client (Restart, Inspect); unchanged except possibly log helpers
-├── discovery/            # Unchanged
-├── recovery/
-│   ├── restart.go       # Flow, RunFullSequence, WaitUntilHealthy, RestartDependents; integrates unrestartable set (skip, add on failure); RestartDependents is invoked from main for proactive case (parent has new ID and healthy) without prior RestartParent
-│   ├── errors.go        # Error classification: IsUnrestartableError (no such container, marked for removal, dependency missing)
-│   ├── unrestartable.go # Unrestartable set type (bounded, thread-safe add/contains/prune); Flow holds an instance
-│   └── *_test.go        # Tests alongside packages
-└── ...*_test.go         # Tests alongside packages
+├── docker/              # Existing; no change for auto-recreate
+├── discovery/           # Existing; ContainerNameToServiceName unchanged
+└── recovery/            # Existing; unrestartable set, last-known parent ID
 ```
 
-**Structure Decision**: Unrestartable set type and its methods live in `internal/recovery/unrestartable.go`. Error classification in `internal/recovery/errors.go`. Flow stays in `internal/recovery/restart.go` and holds the unrestartable set; skip and add-on-failure logic run from RunFullSequence and RestartDependents. For FR-007: track **last-known container ID per parent name** (e.g. in main or on Flow); after each discovery (event path and polling), for each parent compare current ID from the container list to last-known—if different and parent is healthy, call a method that restarts only the dependents of that parent (reusing RestartDependents with same cooldown), then update last-known to current ID. Callers (main.go) share the same Flow instance. All new exported types and functions must have Go docstrings.
+**Structure Decision**: Single binary in cmd/watch-dog; Compose SDK usage is confined to main.go when auto-recreate is enabled (create compose service at startup, call LoadProject + Up in OnParentContainerGone callback).
+
+## Implementation Details (FR-008: Auto-recreate via Compose SDK)
+
+1. **Dependencies**: Add `github.com/docker/compose/v2` and `github.com/docker/cli`; resolve version constraints with existing `github.com/docker/docker` (go mod tidy; pin docker/cli v28.5.2+incompatible if needed for v5).
+2. **Compose service**: Create once at startup when `autoRecreate && composePath != ""` using `compose.NewComposeService(dockerCLI)` where `dockerCLI` is from `command.NewDockerCli()` and `Initialize(flags.ClientOptions{})` (uses DOCKER_HOST / env). On init failure: log warning and disable auto-recreate.
+3. **Project load**: In OnParentContainerGone callback: `LoadProject(ctx, api.ProjectLoadOptions{ConfigPaths: []string{composePath}, WorkingDir: filepath.Dir(composePath), ProjectName: os.Getenv("COMPOSE_PROJECT_NAME")})` then `Up(ctx, project, api.UpOptions{Create: api.CreateOptions{Services: []string{serviceName}, Recreate: "force"}, Start: api.StartOptions{Services: []string{serviceName}}})`. Run in goroutine with existing timeout; same logging (INFO trigger/success, ERROR on failure).
+4. **Service name**: Keep existing resolution: parent container name → compose service name via `discovery.ContainerNameToServiceName(composePath)` (e.g. vpn → gluetun).
+5. **Contract**: Update contracts/recovery-unrestartable-behavior.md FR-008 to state that the monitor performs the equivalent of `docker compose -f <composePath> up -d <service_name>` using the **Docker Compose Go SDK** (no docker or docker-compose binary required); remove "retry with docker-compose" wording.
 
 ## Complexity Tracking
 
-No violations; table left empty.
+No constitution violations requiring justification.

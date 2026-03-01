@@ -11,7 +11,7 @@ This feature stops the monitor from retrying the same failed recovery indefinite
 
 ## What changes for operators
 
-- **Config**: Optional env `WATCHDOG_AUTO_RECREATE` (`true`/`1`/`yes`): when a parent is marked unrestartable with reason **container_gone** or **marked_for_removal**, the monitor can run `docker compose up -d <service_name>` (resolving container name to service name from the compose file when `container_name` is set) so the service comes back without manual intervention; the monitor re-discovers on the next cycle. Requires a compose path. If unset or disabled, behavior is as before (no auto-recreate).
+- **Config**: Optional env `WATCHDOG_AUTO_RECREATE` (`true`/`1`/`yes`): when a parent is marked unrestartable with reason **container_gone** or **marked_for_removal**, the monitor performs the equivalent of `docker compose up -d <service_name>` using the **Docker Compose Go SDK** (in-process; no `docker` or `docker-compose` binary required). Container name is resolved to service name from the compose file when `container_name` is set. Requires a compose path. If unset or disabled, behavior is as before (no auto-recreate).
 - **Logs**: When a restart fails because the container is gone, marked for removal, or a dependency is missing, you will see a clear error that recovery failed and that the monitor will not retry this container ID. When the monitor skips recovery because the container is already known unrestartable, you will see a skip message (INFO or DEBUG) so you know retries are limited.
 - **Recovery after replace**: When the same service is recreated (e.g. new container ID after an updater run), the monitor will pick it up on the next discovery and run recovery for it as normal.
 - **Proactive dependent restart**: When only the **parent** is replaced by an updater (new parent ID, parent healthy), the monitor will proactively restart that parent's dependents within one poll interval or next discovery so the dependent (child) comes back online without needing to recreate the dependent (SC-005).
@@ -51,9 +51,9 @@ This feature stops the monitor from retrying the same failed recovery indefinite
 
 ## Optional: auto-recreate when parent is gone (WATCHDOG_AUTO_RECREATE)
 
-1. **Setup**: Set `WATCHDOG_AUTO_RECREATE=true` (or `1`/`yes`) and ensure `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`) is set. Run the monitor with at least one parent.
+1. **Setup**: Set `WATCHDOG_AUTO_RECREATE=true` (or `1`/`yes`) and ensure `WATCHDOG_COMPOSE_PATH` (or `COMPOSE_FILE`) is set. Run the monitor with at least one parent. Auto-recreate uses the Docker Compose Go SDK (no `docker` or `docker-compose` binary required).
 2. **Trigger**: Remove the parent container (e.g. `docker rm -f <container_name>`). Trigger recovery (event or poll). The daemon may report container_gone or marked_for_removal; both trigger auto-recreate.
-3. **Expected**: One failure log (container_gone or marked_for_removal), then an INFO log that auto-recreate was triggered (parent name, service name if resolved, compose path, re-discover on next cycle). On the next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
+3. **Expected**: One failure log (container_gone or marked_for_removal), then an INFO log that auto-recreate was triggered (parent name, service name if resolved, compose path, re-discover on next cycle). On success, log indicates Compose SDK succeeded. On the next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
 
 ## Optional: run with an updater (e.g. watchtower, wud, ouroboros)
 
