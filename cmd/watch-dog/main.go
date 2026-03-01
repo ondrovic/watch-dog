@@ -36,6 +36,12 @@ var autoRecreate bool
 // composeUpTimeout is the maximum time allowed for a single compose up operation (Compose SDK) during auto-recreate.
 const composeUpTimeout time.Duration = 60 * time.Second
 
+// composeUpInFlight guards per-service compose up so we do not run overlapping Compose Up for the same (composePath, serviceName).
+var composeUpInFlight struct {
+	mu sync.Mutex
+	m  map[string]struct{}
+}
+
 // initialDiscoveryPhaseEnd is set after first discovery; recovery is gated until time.Now() > initialDiscoveryPhaseEnd.
 var initialDiscoveryPhaseEnd time.Time
 
@@ -256,24 +262,52 @@ func main() {
 							serviceName = s
 						}
 					}
+					composeUpInFlight.mu.Lock()
+					if composeUpInFlight.m == nil {
+						composeUpInFlight.m = make(map[string]struct{})
+					}
+					key := composePath + "\x00" + serviceName
+					if _, inFlight := composeUpInFlight.m[key]; inFlight {
+						composeUpInFlight.mu.Unlock()
+						docker.LogInfo("auto-recreate: skipping, compose up already in flight", "parent", parentName, "service", serviceName, "compose_path", composePath)
+						return
+					}
+					composeUpInFlight.m[key] = struct{}{}
+					composeUpInFlight.mu.Unlock()
 					docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "service", serviceName, "compose_path", composePath)
 					go func() {
+						defer func() {
+							composeUpInFlight.mu.Lock()
+							delete(composeUpInFlight.m, key)
+							composeUpInFlight.mu.Unlock()
+						}()
 						runCtx, cancel := context.WithTimeout(ctx, composeUpTimeout)
 						defer cancel()
 						projectName := os.Getenv("COMPOSE_PROJECT_NAME")
 						workingDir := filepath.Dir(composePath)
+						absWorkingDir := workingDir
+						if abs, err := filepath.Abs(workingDir); err == nil {
+							absWorkingDir = abs
+						} else {
+							docker.LogWarn("auto-recreate: failed to resolve working directory to absolute path, using as-is", "working_dir", workingDir, "error", err)
+						}
 						var envFileOpt composecli.ProjectOptionsFn
 						if envFile := os.Getenv("WATCHDOG_ENV_FILE"); envFile != "" {
 							envFilePath := envFile
 							if !filepath.IsAbs(envFilePath) {
-								envFilePath = filepath.Join(workingDir, envFile)
+								envFilePath = filepath.Join(absWorkingDir, envFile)
 							}
 							envFileOpt = composecli.WithEnvFiles(envFilePath)
 						} else {
-							envFileOpt = composecli.WithEnvFiles()
+							defaultEnvPath := filepath.Join(absWorkingDir, ".env")
+							if info, err := os.Stat(defaultEnvPath); err == nil && info != nil && !info.IsDir() {
+								envFileOpt = composecli.WithEnvFiles(defaultEnvPath)
+							} else {
+								envFileOpt = composecli.WithEnvFiles()
+							}
 						}
 						opts := []composecli.ProjectOptionsFn{
-							composecli.WithWorkingDirectory(workingDir),
+							composecli.WithWorkingDirectory(absWorkingDir),
 							composecli.WithOsEnv,
 							envFileOpt,
 							composecli.WithDotEnv,

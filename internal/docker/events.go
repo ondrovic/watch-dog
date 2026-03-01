@@ -50,7 +50,7 @@ func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEve
 				default:
 					continue
 				}
-				// For health_status the attribute is "health_status"; for die/stop/destroy use "name"
+				// Read the "name" attribute from e.Actor.Attributes (falls back to container ID if not present).
 				name := e.Actor.Attributes["name"]
 				if name == "" {
 					name = e.Actor.ID

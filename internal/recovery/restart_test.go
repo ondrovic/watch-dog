@@ -12,10 +12,11 @@ import (
 
 // fakeClient records Restart and Inspect calls for tests.
 type fakeClient struct {
-	mu              sync.Mutex
-	restarts        []string
-	inspect         map[string]string // containerID -> health to return
-	nextRestartErr  error              // if set, Restart returns it once and clears it
+	mu               sync.Mutex
+	restarts         []string
+	inspect          map[string]string // containerID -> health to return
+	nextRestartErr   error             // if set, Restart returns it once and clears it
+	nextInspectErr   error             // if set, Inspect returns it once and clears it
 }
 
 func (c *fakeClient) Restart(ctx context.Context, containerID string) error {
@@ -32,11 +33,16 @@ func (c *fakeClient) Restart(ctx context.Context, containerID string) error {
 
 func (c *fakeClient) Inspect(ctx context.Context, containerID string) (health string, labels map[string]string, err error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.nextInspectErr != nil {
+		err = c.nextInspectErr
+		c.nextInspectErr = nil
+		return "", nil, err
+	}
 	h := c.inspect[containerID]
 	if h == "" {
 		h = "healthy"
 	}
-	c.mu.Unlock()
 	return h, nil, nil
 }
 
@@ -240,6 +246,21 @@ func TestRunFullSequence_onParentContainerGone_calledForContainerGoneAndMarkedFo
 		flow.RunFullSequence(ctx, "parent-id", "vpn", "die", &parentToDeps, nameToID, "")
 		if goneName != "" {
 			t.Errorf("OnParentContainerGone should not be called for dependency_missing, got %q", goneName)
+		}
+	})
+
+	t.Run("inspect_unrestartable", func(t *testing.T) {
+		// Restart succeeds; WaitUntilHealthy's first Inspect returns unrestartable error → OnParentContainerGone called.
+		fake := &fakeClient{inspect: make(map[string]string), nextInspectErr: errors.New("Error response from daemon: No such container: parent-id")}
+		var goneName string
+		flow := &Flow{
+			Client:                 fake,
+			Unrestartable:          NewSet(0),
+			OnParentContainerGone: func(parentName string) { goneName = parentName },
+		}
+		flow.RunFullSequence(ctx, "parent-id", "vpn", "die", &parentToDeps, nameToID, "")
+		if goneName != "vpn" {
+			t.Errorf("OnParentContainerGone called with %q, want %q (WaitUntilHealthy/Inspect path)", goneName, "vpn")
 		}
 	})
 }
