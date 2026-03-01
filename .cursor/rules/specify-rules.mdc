@@ -14,6 +14,9 @@ Auto-generated from all feature plans. Last updated: 2026-02-28
 - N/A (no persistent storage; discovery and state from Docker API and compose file) (003-fix-children-handling)
 - Go 1.21+ (go.mod may specify 1.25; compatible 1.21+) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog, gopkg.in/yaml.v3 (compose parsing) (004-child-deps-initial-restart)
 - N/A (discovery and state from Docker API and compose file) (004-child-deps-initial-restart)
+- N/A (in-memory unrestartable set only; discovery and state from Docker API and compose file) (005-fix-recovery-stale-container)
+- N/A (in-memory unrestartable set and last-known parent ID map only; discovery and state from Docker API and compose file) (005-fix-recovery-stale-container)
+- Go 1.21+ (go.mod 1.25; compatible 1.21+) + Docker Engine API (github.com/docker/docker/client), log/slog, gopkg.in/yaml.v3 (compose parsing). **New for FR-008**: Docker Compose Go SDK (github.com/docker/compose/v2) and github.com/docker/cli for the CLI layer the SDK uses to talk to the daemon; pin docker/cli to v28.5.2+incompatible if using Compose v5 to avoid moby/moby vs docker/docker conflicts. (005-fix-recovery-stale-container)
 
 - Go 1.21+ + Docker Engine API (e.g. github.com/docker/docker/client), standard library (001-container-health-monitor)
 
@@ -33,9 +36,9 @@ internal/        # docker, discovery, recovery; tests alongside (e.g. internal/d
 Go 1.21+: Follow standard conventions
 
 ## Recent Changes
-- 004-child-deps-initial-restart: Added Go 1.21+ (go.mod may specify 1.25; compatible 1.21+) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog, gopkg.in/yaml.v3 (compose parsing)
-- 003-fix-children-handling: Added Go 1.25 (go.mod); compatible with Go 1.21+ + github.com/docker/docker/client (Docker Engine API), gopkg.in/yaml.v3 (compose parsing), standard library, log/slog
-- 002-docker-healthcheck: Added Go 1.21+ (existing) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog (existing)
+- 005-fix-recovery-stale-container: Added Go 1.21+ (go.mod 1.25; compatible 1.21+) + Docker Engine API (github.com/docker/docker/client), log/slog, gopkg.in/yaml.v3 (compose parsing). **New for FR-008**: Docker Compose Go SDK (github.com/docker/compose/v2) and github.com/docker/cli for the CLI layer the SDK uses to talk to the daemon; pin docker/cli to v28.5.2+incompatible if using Compose v5 to avoid moby/moby vs docker/docker conflicts.
+- 005-fix-recovery-stale-container: Added Go 1.21+ (go.mod may specify 1.25; compatible 1.21+) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog, gopkg.in/yaml.v3 (compose parsing)
+- 005-fix-recovery-stale-container: Added Go 1.21+ (go.mod may specify 1.25; compatible 1.21+) + Docker Engine API (github.com/docker/docker/client), standard library, log/slog, gopkg.in/yaml.v3 (compose parsing)
 
 
 <!-- MANUAL ADDITIONS START -->

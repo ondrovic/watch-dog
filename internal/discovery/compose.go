@@ -4,6 +4,7 @@ package discovery
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -18,10 +19,12 @@ type ComposeFile struct {
 	Services map[string]ComposeService `yaml:"services"`
 }
 
-// ComposeService holds a single service's depends_on (and optional fields we ignore).
+// ComposeService holds a single service's depends_on, container_name (and optional fields we ignore).
 type ComposeService struct {
 	// DependsOn is short form ([]string) or long form (map[string]DependsOnEntry).
 	DependsOn interface{} `yaml:"depends_on"`
+	// ContainerName is the optional container_name (used to resolve container name to service name for compose up).
+	ContainerName string `yaml:"container_name"`
 }
 
 // DependsOnEntry is the long-form value (condition, restart, etc.).
@@ -187,4 +190,34 @@ func BuildParentToDependentsFromCompose(ctx context.Context, cli *docker.Client,
 		}
 	}
 	return m, nil
+}
+
+// ContainerNameToServiceName parses the compose file at composePath and returns a map from
+// container name to service name for every service that sets container_name. Used so
+// docker compose up -d receives the service name (e.g. gluetun) not the container name (e.g. vpn).
+// Returns an initialized empty map (never nil) on success, for consistency with BuildParentToDependentsFromCompose.
+// Returns an error if two services use the same container_name.
+func ContainerNameToServiceName(composePath string) (map[string]string, error) {
+	if composePath == "" {
+		return make(map[string]string), nil
+	}
+	f, err := ParseComposeFile(composePath)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return make(map[string]string), nil
+	}
+	out := make(map[string]string)
+	for svcName, svc := range f.Services {
+		cn := trim(svc.ContainerName)
+		if cn == "" {
+			continue
+		}
+		if existing, ok := out[cn]; ok {
+			return nil, fmt.Errorf("duplicate container_name %q: used by services %q and %q", cn, existing, svcName)
+		}
+		out[cn] = svcName
+	}
+	return out, nil
 }

@@ -10,18 +10,38 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	composecli "github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	cliflags "github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
+
 	"watch-dog/internal/discovery"
 	"watch-dog/internal/docker"
 	"watch-dog/internal/recovery"
+	"watch-dog/internal/util"
 )
 
 var recoveryCooldown time.Duration
 var initialDiscoveryWait time.Duration
 var dependentRestartCooldown time.Duration
+var autoRecreate bool
+
+// composeUpTimeout is the maximum time allowed for a single compose up operation (Compose SDK) during auto-recreate.
+const composeUpTimeout time.Duration = 60 * time.Second
+
+// composeUpInFlight guards per-service compose up so we do not run overlapping Compose Up for the same (composePath, serviceName).
+var composeUpInFlight struct {
+	mu sync.Mutex
+	m  map[string]struct{}
+}
 
 // initialDiscoveryPhaseEnd is set after first discovery; recovery is gated until time.Now() > initialDiscoveryPhaseEnd.
 var initialDiscoveryPhaseEnd time.Time
@@ -78,6 +98,9 @@ func init() {
 		}
 		dependentRestartCooldown = d
 	}
+
+	ar := strings.TrimSpace(strings.ToLower(os.Getenv("WATCHDOG_AUTO_RECREATE")))
+	autoRecreate = ar == "true" || ar == "1" || ar == "yes"
 }
 
 // isInitialDiscoveryComplete returns true after the initial discovery phase (first discovery + wait) has elapsed.
@@ -87,6 +110,54 @@ func isInitialDiscoveryComplete() bool {
 		return false
 	}
 	return !time.Now().Before(initialDiscoveryPhaseEnd)
+}
+
+// lastKnownParentIDs stores the last container ID seen per parent name for proactive
+// dependent restart (FR-007): when a parent has a new ID and is healthy, we restart its dependents.
+type lastKnownParentIDs struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+// runProactiveRestartIfNeeded runs after discovery: for each parent, if current ID
+// differs from last-known and parent is healthy, proactively restarts that parent's
+// dependents (no parent restart). On first discovery only populates last-known without restarting.
+func runProactiveRestartIfNeeded(ctx context.Context, cli *docker.Client, flow *recovery.Flow, parentToDeps *discovery.ParentToDependents, nameToID map[string]string, selfName string, lastKnown *lastKnownParentIDs) {
+	if lastKnown == nil {
+		return
+	}
+	lastKnown.mu.Lock()
+	if lastKnown.m == nil {
+		lastKnown.m = make(map[string]string)
+	}
+	toRestart := make([]string, 0)
+	for parentName := range *parentToDeps {
+		currentID, ok := nameToID[parentName]
+		if !ok {
+			continue
+		}
+		lastID := lastKnown.m[parentName]
+		if lastID == "" {
+			lastKnown.m[parentName] = currentID
+			continue
+		}
+		if lastID != currentID {
+			lastKnown.mu.Unlock()
+			health, _, err := cli.Inspect(ctx, currentID)
+			lastKnown.mu.Lock()
+			// Re-check: another goroutine may have already processed this change
+			if lastKnown.m[parentName] == lastID && err == nil && health == "healthy" {
+				lastKnown.m[parentName] = currentID
+				toRestart = append(toRestart, parentName)
+			}
+		}
+	}
+	lastKnown.mu.Unlock()
+	for _, parentName := range toRestart {
+		currentID := nameToID[parentName]
+		docker.LogInfoRecovery("recovery: parent has new ID, proactively restarting dependents", "parent", parentName, "id_short", util.ShortID(currentID))
+		flow.RestartDependents(ctx, parentName, parentToDeps, nameToID, selfName)
+	}
 }
 
 // recoveryCooldownState tracks last recovery time and in-flight recovery per parent
@@ -158,8 +229,124 @@ func main() {
 	flow := &recovery.Flow{
 		Client:                   cli,
 		DependentRestartCooldown: dependentRestartCooldown,
+		Unrestartable:            recovery.NewSet(0),
+	}
+	composePath := discovery.ComposePathFromEnv()
+	var dockerCLI *command.DockerCli
+	if autoRecreate && composePath != "" {
+		containerToService, err := discovery.ContainerNameToServiceName(composePath)
+		if err != nil {
+			docker.LogWarn("container name to service mapping failed, using parent name as service", "compose_path", composePath, "error", err)
+		}
+		dockerCLI, err = command.NewDockerCli()
+		if err != nil {
+			docker.LogWarn("auto-recreate: failed to create Docker CLI, disabling auto-recreate", "error", err)
+			autoRecreate = false
+		} else {
+			err = dockerCLI.Initialize(cliflags.NewClientOptions())
+			if err != nil {
+				docker.LogWarn("auto-recreate: failed to initialize Docker CLI, disabling auto-recreate", "error", err)
+				autoRecreate = false
+			} else {
+				defer func() {
+					if dockerCLI != nil {
+						if c := dockerCLI.Client(); c != nil {
+							_ = c.Close()
+						}
+					}
+				}()
+				composeSvc := compose.NewComposeService(dockerCLI)
+				flow.OnParentContainerGone = func(parentName string) {
+					serviceName := parentName
+					if containerToService != nil {
+						if s := containerToService[parentName]; s != "" {
+							serviceName = s
+						}
+					}
+					composeUpInFlight.mu.Lock()
+					if composeUpInFlight.m == nil {
+						composeUpInFlight.m = make(map[string]struct{})
+					}
+					key := composePath + "\x00" + serviceName
+					if _, inFlight := composeUpInFlight.m[key]; inFlight {
+						composeUpInFlight.mu.Unlock()
+						docker.LogInfo("auto-recreate: skipping, compose up already in flight", "parent", parentName, "service", serviceName, "compose_path", composePath)
+						return
+					}
+					composeUpInFlight.m[key] = struct{}{}
+					composeUpInFlight.mu.Unlock()
+					docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "service", serviceName, "compose_path", composePath)
+					go func() {
+						defer func() {
+							composeUpInFlight.mu.Lock()
+							delete(composeUpInFlight.m, key)
+							composeUpInFlight.mu.Unlock()
+						}()
+						runCtx, cancel := context.WithTimeout(ctx, composeUpTimeout)
+						defer cancel()
+						projectName := os.Getenv("COMPOSE_PROJECT_NAME")
+						workingDir := filepath.Dir(composePath)
+						absWorkingDir := workingDir
+						if abs, err := filepath.Abs(workingDir); err == nil {
+							absWorkingDir = abs
+						} else {
+							docker.LogWarn("auto-recreate: failed to resolve working directory to absolute path, using as-is", "working_dir", workingDir, "error", err)
+						}
+						var envFileOpt composecli.ProjectOptionsFn
+						if envFile := os.Getenv("WATCHDOG_ENV_FILE"); envFile != "" {
+							envFilePath := envFile
+							if !filepath.IsAbs(envFilePath) {
+								envFilePath = filepath.Join(absWorkingDir, envFile)
+							}
+							envFileOpt = composecli.WithEnvFiles(envFilePath)
+						} else {
+							defaultEnvPath := filepath.Join(absWorkingDir, ".env")
+							if info, err := os.Stat(defaultEnvPath); err == nil && info != nil && !info.IsDir() {
+								envFileOpt = composecli.WithEnvFiles(defaultEnvPath)
+							} else {
+								envFileOpt = composecli.WithEnvFiles()
+							}
+						}
+						opts := []composecli.ProjectOptionsFn{
+							composecli.WithWorkingDirectory(absWorkingDir),
+							composecli.WithOsEnv,
+							envFileOpt,
+							composecli.WithDotEnv,
+						}
+						if projectName != "" && projectName != "." {
+							opts = append(opts, composecli.WithName(projectName))
+						}
+						projOpts, err := composecli.NewProjectOptions([]string{composePath}, opts...)
+						if err != nil {
+							docker.LogError("auto-recreate: failed to create project options", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						project, err := projOpts.LoadProject(runCtx)
+						if err != nil {
+							docker.LogError("auto-recreate: failed to load compose project", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						project, err = project.WithSelectedServices([]string{serviceName}, types.IgnoreDependencies)
+						if err != nil {
+							docker.LogError("auto-recreate: failed to filter project to service", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						err = composeSvc.Up(runCtx, project, api.UpOptions{
+							Create: api.CreateOptions{Services: []string{serviceName}, Recreate: api.RecreateForce},
+							Start:  api.StartOptions{Services: []string{serviceName}},
+						})
+						if err != nil {
+							docker.LogError("auto-recreate: Compose SDK Up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						docker.LogInfo("auto-recreate: Compose SDK up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath)
+					}()
+				}
+			}
+		}
 	}
 	cooldown := &recoveryCooldownState{}
+	lastKnownParents := &lastKnownParentIDs{}
 	selfName := os.Getenv("WATCHDOG_CONTAINER_NAME")
 	if selfName == "" {
 		docker.LogWarn("WATCHDOG_CONTAINER_NAME not set: self-last-restart behavior disabled")
@@ -197,7 +384,7 @@ func main() {
 			var buildErr error
 			built, buildErr = discovery.BuildParentToDependents(ctx, cli)
 			if buildErr == nil {
-				runStartupReconciliation(ctx, cli, &built, flow, cooldown, selfName)
+				runStartupReconciliation(ctx, cli, &built, flow, cooldown, lastKnownParents, selfName)
 				return
 			}
 			lastErr = buildErr
@@ -218,7 +405,7 @@ func main() {
 	healthCh := make(chan docker.HealthEvent, 8)
 	cli.SubscribeHealthStatus(ctx, healthCh)
 
-	go runPollingFallback(ctx, cli, flow, cooldown, selfName)
+	go runPollingFallback(ctx, cli, flow, cooldown, lastKnownParents, selfName)
 
 	for {
 		select {
@@ -239,30 +426,32 @@ func main() {
 			if !parentToDeps.IsParent(ev.ContainerName) {
 				continue
 			}
-			tryRecoverParent(ctx, ev.ContainerID, ev.ContainerName, ev.Status, shortID(ev.ContainerID), "event", flow, cooldown, &parentToDeps, selfName)
+			containers, listErr := cli.ListContainers(ctx, true)
+			if listErr != nil {
+				docker.LogError("event: list containers", "error", listErr)
+				continue
+			}
+			nameToID, _ := buildContainerMaps(containers)
+			if flow.Unrestartable != nil {
+				flow.Unrestartable.Prune(containerIDs(containers))
+			}
+			runProactiveRestartIfNeeded(ctx, cli, flow, &parentToDeps, nameToID, selfName, lastKnownParents)
+			tryRecoverParent(ctx, ev.ContainerID, ev.ContainerName, ev.Status, util.ShortID(ev.ContainerID), "event", flow, cooldown, &parentToDeps, nameToID, selfName)
 		}
 	}
 }
 
-// shortID returns the first 12 characters of a container ID.
-func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
-}
-
 // tryRecoverParent runs recovery for a parent if cooldown allows: StartRecovery, then defer EndRecovery, then RunFullSequence.
 // reason describes why recovery was triggered (e.g. "stop", "unhealthy"). idShort is the short container ID for logging.
-// trigger is "event", "startup", or "polling". INFO recovery log is emitted only when recovery actually runs (after cooldown check).
-func tryRecoverParent(ctx context.Context, parentID, parentName, reason, idShort, trigger string, flow *recovery.Flow, cooldown *recoveryCooldownState, parentToDeps *discovery.ParentToDependents, selfName string) {
+// trigger is "event", "startup", or "polling". nameToID maps container name to ID for dependents (from ListContainers); may be nil.
+func tryRecoverParent(ctx context.Context, parentID, parentName, reason, idShort, trigger string, flow *recovery.Flow, cooldown *recoveryCooldownState, parentToDeps *discovery.ParentToDependents, nameToID map[string]string, selfName string) {
 	if !cooldown.StartRecovery(parentName) {
 		docker.LogDebug("skipping recovery, in cooldown or in flight", "parent", parentName, "id", parentID)
 		return
 	}
 	defer cooldown.EndRecovery(parentName)
 	docker.LogInfoRecovery(fmt.Sprintf("recovery: attempting recovery for parent %q (reason: %s, trigger: %s)", parentName, reason, trigger), "parent", parentName, "reason", reason, "id_short", idShort, "trigger", trigger)
-	flow.RunFullSequence(ctx, parentID, parentName, reason, parentToDeps, selfName)
+	flow.RunFullSequence(ctx, parentID, parentName, reason, parentToDeps, nameToID, selfName)
 }
 
 // buildContainerMaps builds name→ID and name→state maps from the given containers.
@@ -276,14 +465,27 @@ func buildContainerMaps(containers []docker.ContainerInfo) (nameToID, nameToStat
 	return nameToID, nameToState
 }
 
+// containerIDs returns the list of container IDs from the given containers.
+func containerIDs(containers []docker.ContainerInfo) []string {
+	ids := make([]string, 0, len(containers))
+	for _, c := range containers {
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
 // runStartupReconciliation finds parents that are already unhealthy or stopped and runs full recovery.
-func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discovery.ParentToDependents, flow *recovery.Flow, cooldown *recoveryCooldownState, selfName string) {
+func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discovery.ParentToDependents, flow *recovery.Flow, cooldown *recoveryCooldownState, lastKnown *lastKnownParentIDs, selfName string) {
 	containers, err := cli.ListContainers(ctx, true)
 	if err != nil {
 		docker.LogError("startup list containers", "error", err)
 		return
 	}
 	nameToID, nameToState := buildContainerMaps(containers)
+	if flow.Unrestartable != nil {
+		flow.Unrestartable.Prune(containerIDs(containers))
+	}
+	runProactiveRestartIfNeeded(ctx, cli, flow, m, nameToID, selfName, lastKnown)
 	for parentName := range *m {
 		id, ok := nameToID[parentName]
 		if !ok {
@@ -291,14 +493,14 @@ func runStartupReconciliation(ctx context.Context, cli *docker.Client, m *discov
 		}
 		state := nameToState[parentName]
 		if state != "running" {
-			tryRecoverParent(ctx, id, parentName, state, shortID(id), "startup", flow, cooldown, m, selfName)
+			tryRecoverParent(ctx, id, parentName, state, util.ShortID(id), "startup", flow, cooldown, m, nameToID, selfName)
 			continue
 		}
 		health, _, err := cli.Inspect(ctx, id)
 		if err != nil || health != "unhealthy" {
 			continue
 		}
-		tryRecoverParent(ctx, id, parentName, "unhealthy", shortID(id), "startup", flow, cooldown, m, selfName)
+		tryRecoverParent(ctx, id, parentName, "unhealthy", util.ShortID(id), "startup", flow, cooldown, m, nameToID, selfName)
 	}
 }
 
@@ -306,7 +508,7 @@ const pollInterval = 60 * time.Second
 
 // runPollingFallback periodically rechecks parent health and triggers recovery if unhealthy.
 // Recovery runs only after initial discovery phase is complete; see isInitialDiscoveryComplete().
-func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.Flow, cooldown *recoveryCooldownState, selfName string) {
+func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.Flow, cooldown *recoveryCooldownState, lastKnown *lastKnownParentIDs, selfName string) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
@@ -326,6 +528,10 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				continue
 			}
 			nameToID, nameToState := buildContainerMaps(containers)
+			if flow.Unrestartable != nil {
+				flow.Unrestartable.Prune(containerIDs(containers))
+			}
+			runProactiveRestartIfNeeded(ctx, cli, flow, &parentToDeps, nameToID, selfName, lastKnown)
 			for parentName := range parentToDeps {
 				id, ok := nameToID[parentName]
 				if !ok {
@@ -333,7 +539,7 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 				}
 				state := nameToState[parentName]
 				if state != "running" {
-					tryRecoverParent(ctx, id, parentName, state, shortID(id), "polling", flow, cooldown, &parentToDeps, selfName)
+					tryRecoverParent(ctx, id, parentName, state, util.ShortID(id), "polling", flow, cooldown, &parentToDeps, nameToID, selfName)
 					continue
 				}
 				health, _, err := cli.Inspect(ctx, id)
@@ -342,7 +548,7 @@ func runPollingFallback(ctx context.Context, cli *docker.Client, flow *recovery.
 					continue
 				}
 				if health == "unhealthy" {
-					tryRecoverParent(ctx, id, parentName, "unhealthy", shortID(id), "polling", flow, cooldown, &parentToDeps, selfName)
+					tryRecoverParent(ctx, id, parentName, "unhealthy", util.ShortID(id), "polling", flow, cooldown, &parentToDeps, nameToID, selfName)
 				}
 			}
 		}

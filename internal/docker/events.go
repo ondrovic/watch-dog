@@ -1,5 +1,5 @@
 // Package docker provides a Docker API client for listing containers, inspecting
-// health status, and restarting containers, plus logging and health-status event subscription.
+// health status, and restarting containers, plus logging and container event subscription (health_status, die, stop, destroy).
 package docker
 
 import (
@@ -9,7 +9,11 @@ import (
 	"github.com/docker/docker/api/types/filters"
 )
 
-// HealthEvent is emitted when a container's health status changes.
+// HealthEvent represents a container lifecycle notification for recovery.
+// SubscribeHealthStatus emits not only health_status actions (e.g. unhealthy) but also
+// lifecycle actions (die, stop, destroy). Events are delivered on the returned channel
+// while the context is active; the channel is closed when the subscription ends.
+// See SubscribeHealthStatus for the full event scope so downstream users are not misled.
 type HealthEvent struct {
 	// ContainerID is the container ID.
 	ContainerID string
@@ -19,8 +23,8 @@ type HealthEvent struct {
 	Status string
 }
 
-// SubscribeHealthStatus subscribes to Docker container events: health_status (unhealthy), die, and stop.
-// When a parent container goes unhealthy or stops, the event is sent to the channel so recovery can run.
+// SubscribeHealthStatus subscribes to Docker container events: health_status (unhealthy), die, stop, and destroy.
+// When a parent container goes unhealthy, stops, or is removed, the event is sent to the channel so recovery can run.
 // The context cancels the subscription. The channel is closed when the subscription ends.
 func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEvent) {
 	opts := events.ListOptions{Filters: newRecoveryEventFilter()}
@@ -44,10 +48,13 @@ func (c *Client) SubscribeHealthStatus(ctx context.Context, out chan<- HealthEve
 					continue
 				}
 				action := e.Action
-				if action != "health_status: unhealthy" && action != "die" && action != "stop" {
+				switch action {
+				case "health_status: unhealthy", "die", "stop", "destroy":
+					// process this event
+				default:
 					continue
 				}
-				// For health_status the attribute is "health_status"; for die/stop use "name"
+				// Read the "name" attribute from e.Actor.Attributes (falls back to container ID if not present).
 				name := e.Actor.Attributes["name"]
 				if name == "" {
 					name = e.Actor.ID
@@ -72,5 +79,6 @@ func newRecoveryEventFilter() filters.Args {
 	f.Add("event", "health_status")
 	f.Add("event", "die")
 	f.Add("event", "stop")
+	f.Add("event", "destroy")
 	return f
 }
