@@ -140,3 +140,106 @@ func TestRestartDependents_cooldownDisabledRestartsEveryTime(t *testing.T) {
 		t.Errorf("cooldown disabled: got %d restarts %v, want 2 (dep-a twice)", len(got), got)
 	}
 }
+
+func TestRestartDependents_nameToID_skipsUnrestartableRestartsOthers(t *testing.T) {
+	ctx := context.Background()
+	const idUnrestartable = "id-unrestartable"
+	const idRestartable = "id-restartable"
+	fake := &fakeClient{inspect: make(map[string]string)}
+	unrestartable := NewSet(0)
+	unrestartable.Add(idUnrestartable, nil)
+	flow := &Flow{
+		Client:                   fake,
+		DependentRestartCooldown: 0,
+		Unrestartable:            unrestartable,
+	}
+	parentToDeps := discovery.ParentToDependents{
+		"parent1": {"dep-unrestartable", "dep-restartable"},
+	}
+	nameToID := map[string]string{
+		"dep-unrestartable": idUnrestartable,
+		"dep-restartable":   idRestartable,
+	}
+
+	flow.RestartDependents(ctx, "parent1", &parentToDeps, nameToID, "")
+	got := fake.getRestarts()
+	if len(got) != 1 || got[0] != idRestartable {
+		t.Errorf("with nameToID: got restarts %v, want [%s] (unrestartable skipped)", got, idRestartable)
+	}
+}
+
+func TestRestartDependents_nameToID_failedRestartClearsCooldown(t *testing.T) {
+	ctx := context.Background()
+	const depID = "id-dep-a"
+	fake := &fakeClient{inspect: make(map[string]string), nextRestartErr: errors.New("fake restart failure")}
+	flow := &Flow{
+		Client:                   fake,
+		DependentRestartCooldown: 2 * time.Second,
+	}
+	parentToDeps := discovery.ParentToDependents{
+		"parent1": {"dep-a"},
+	}
+	nameToID := map[string]string{"dep-a": depID}
+
+	flow.RestartDependents(ctx, "parent1", &parentToDeps, nameToID, "")
+	if got := fake.getRestarts(); len(got) != 0 {
+		t.Fatalf("after first RestartDependents (Restart failed) with nameToID: got %d restarts %v, want 0", len(got), got)
+	}
+
+	flow.RestartDependents(ctx, "parent1", &parentToDeps, nameToID, "")
+	got := fake.getRestarts()
+	if len(got) != 1 || got[0] != depID {
+		t.Errorf("after second RestartDependents with nameToID: got %v, want [%s] (cooldown cleared)", got, depID)
+	}
+}
+
+// TestRunFullSequence_onParentContainerGone_calledForContainerGoneAndMarkedForRemoval verifies
+// that OnParentContainerGone is invoked when RestartParent fails with container_gone or marked_for_removal,
+// and not invoked for dependency_missing.
+func TestRunFullSequence_onParentContainerGone_calledForContainerGoneAndMarkedForRemoval(t *testing.T) {
+	ctx := context.Background()
+	parentToDeps := discovery.ParentToDependents{"vpn": {"dler"}}
+	nameToID := map[string]string{"dler": "dep-id"}
+
+	t.Run("container_gone", func(t *testing.T) {
+		fake := &fakeClient{inspect: make(map[string]string), nextRestartErr: errors.New("Error response from daemon: No such container: abc123")}
+		var goneName string
+		flow := &Flow{
+			Client:                   fake,
+			Unrestartable:            NewSet(0),
+			OnParentContainerGone:   func(parentName string) { goneName = parentName },
+		}
+		flow.RunFullSequence(ctx, "parent-id", "vpn", "die", &parentToDeps, nameToID, "")
+		if goneName != "vpn" {
+			t.Errorf("OnParentContainerGone called with %q, want %q", goneName, "vpn")
+		}
+	})
+
+	t.Run("marked_for_removal", func(t *testing.T) {
+		fake := &fakeClient{inspect: make(map[string]string), nextRestartErr: errors.New("container is marked for removal and cannot be started")}
+		var goneName string
+		flow := &Flow{
+			Client:                 fake,
+			Unrestartable:          NewSet(0),
+			OnParentContainerGone: func(parentName string) { goneName = parentName },
+		}
+		flow.RunFullSequence(ctx, "parent-id", "vpn", "die", &parentToDeps, nameToID, "")
+		if goneName != "vpn" {
+			t.Errorf("OnParentContainerGone called with %q, want %q", goneName, "vpn")
+		}
+	})
+
+	t.Run("dependency_missing_not_called", func(t *testing.T) {
+		fake := &fakeClient{inspect: make(map[string]string), nextRestartErr: errors.New("joining network namespace of container: No such container: xyz")}
+		var goneName string
+		flow := &Flow{
+			Client:                 fake,
+			Unrestartable:          NewSet(0),
+			OnParentContainerGone: func(parentName string) { goneName = parentName },
+		}
+		flow.RunFullSequence(ctx, "parent-id", "vpn", "die", &parentToDeps, nameToID, "")
+		if goneName != "" {
+			t.Errorf("OnParentContainerGone should not be called for dependency_missing, got %q", goneName)
+		}
+	})
+}

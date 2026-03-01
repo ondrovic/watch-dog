@@ -131,11 +131,9 @@ func runProactiveRestartIfNeeded(ctx context.Context, cli *docker.Client, flow *
 			health, _, err := cli.Inspect(ctx, currentID)
 			lastKnown.mu.Lock()
 			// Re-check: another goroutine may have already processed this change
-			if lastKnown.m[parentName] == lastID {
+			if lastKnown.m[parentName] == lastID && err == nil && health == "healthy" {
 				lastKnown.m[parentName] = currentID
-				if err == nil && health == "healthy" {
-					toRestart = append(toRestart, parentName)
-				}
+				toRestart = append(toRestart, parentName)
 			}
 		}
 	}
@@ -220,16 +218,34 @@ func main() {
 	}
 	composePath := discovery.ComposePathFromEnv()
 	if autoRecreate && composePath != "" {
+		containerToService, _ := discovery.ContainerNameToServiceName(composePath)
 		flow.OnParentContainerGone = func(parentName string) {
-			docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "compose_path", composePath)
+			serviceName := parentName
+			if containerToService != nil {
+				if s := containerToService[parentName]; s != "" {
+					serviceName = s
+				}
+			}
+			docker.LogInfo("auto-recreate: triggering docker compose up for parent (monitor will re-discover on next cycle)", "parent", parentName, "service", serviceName, "compose_path", composePath)
 			dir := filepath.Dir(composePath)
 			if dir == "" || dir == "." {
-				dir, _ = os.Getwd()
+				wd, err := os.Getwd()
+				if err != nil {
+					docker.LogWarn("auto-recreate: could not get working directory, using \".\"", "compose_path", composePath, "error", err)
+					dir = "."
+				} else {
+					dir = wd
+				}
 			}
-			cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d", parentName)
+			runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(runCtx, "docker", "compose", "-f", composePath, "up", "-d", serviceName)
 			cmd.Dir = dir
-			if err := cmd.Run(); err != nil {
-				docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "error", err)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				docker.LogError("auto-recreate: docker compose up failed", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out), "error", err)
+			} else {
+				docker.LogInfo("auto-recreate: docker compose up succeeded", "parent", parentName, "service", serviceName, "compose_path", composePath, "dir", dir, "output", string(out))
 			}
 		}
 	}

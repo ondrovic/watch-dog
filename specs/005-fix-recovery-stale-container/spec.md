@@ -68,9 +68,9 @@ When recovery fails in a way that indicates the container cannot be restarted (e
 
 ### User Story 4 - Optional auto-recreate when parent is gone (Priority: P2, optional)
 
-When the monitor marks a **parent** as unrestartable with reason container_gone (no such container), the operator may prefer the monitor to trigger recreation of that service via the compose file (e.g. `docker compose up -d <service_name>`) so they do not have to run compose by hand. When this option is enabled (e.g. WATCHDOG_AUTO_RECREATE), the monitor runs compose up for that parent service name; recovery then proceeds when discovery sees the new container ID.
+When the monitor marks a **parent** as unrestartable with reason container_gone (no such container) or marked_for_removal, the operator may prefer the monitor to trigger recreation of that service via the compose file (e.g. `docker compose up -d <service_name>`) so they do not have to run compose by hand. When this option is enabled (e.g. WATCHDOG_AUTO_RECREATE), the monitor runs compose up for that parent's **service name** (resolved from the compose file when `container_name` is set); recovery then proceeds when discovery sees the new container ID.
 
-**Acceptance**: With the option enabled, remove a monitored parent; verify one failure log (container_gone), then a log that auto-recreate was triggered, then on next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
+**Acceptance**: With the option enabled, remove a monitored parent (e.g. `docker rm -f <container_name>`); verify one failure log (container_gone or marked_for_removal), then a log that auto-recreate was triggered, then on next discovery the new container is seen and recovery runs for the new ID (or the new container is already healthy).
 
 ---
 
@@ -103,7 +103,7 @@ When the monitor marks a **parent** as unrestartable with reason container_gone 
 - **FR-005**: The system MUST provide operators with identifiable failure reasons when recovery fails (e.g. container gone, marked for removal, dependency missing), so that logs support troubleshooting and manual intervention.
 - **FR-006**: When the system limits or stops retries for a failed recovery, it MUST continue to monitor other containers and MUST still attempt recovery for them when appropriate; one unrestartable container must not block monitoring of the rest.
 - **FR-007**: When the monitor observes that a parent has a new container ID and is healthy (e.g. after re-discovery, such as when an updater replaced the parent), the system MUST proactively restart all dependents of that parent so dependents that were failing due to the missing (old) parent's network can re-bind to the new parent and the child/dependent comes back online. The same dependent restart cooldown as in normal recovery (e.g. at most one restart per dependent per cooldown window) MUST apply to these proactive restarts.
-- **FR-008** (optional): When configured (e.g. via WATCHDOG_AUTO_RECREATE), when a **parent** is marked unrestartable with reason container_gone (no such container), the system MAY trigger recreation of that service via the compose file (e.g. `docker compose up -d <service_name>`) so the operator does not have to run compose by hand; recovery then proceeds when discovery sees the new container ID. This applies only to parent container_gone, not to dependents or to marked_for_removal/dependency_missing.
+- **FR-008** (optional): When configured (e.g. via WATCHDOG_AUTO_RECREATE), when a **parent** is marked unrestartable with reason container_gone or marked_for_removal, the system MAY trigger recreation of that service via the compose file (e.g. `docker compose up -d <service_name>`) so the operator does not have to run compose by hand; recovery then proceeds when discovery sees the new container ID. The monitor resolves container name to service name from the compose file when `container_name` is set. This applies only to parent container_gone or marked_for_removal, not to dependents or to dependency_missing.
 
 ### Key Entities
 

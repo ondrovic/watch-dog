@@ -36,8 +36,8 @@ type Flow struct {
 	// Unrestartable holds container IDs for which restart (or inspect during wait-for-healthy) has failed with an unrestartable error.
 	// If nil, unrestartable tracking is disabled.
 	Unrestartable *Set
-	// OnParentContainerGone, if non-nil, is called when a parent is added to Unrestartable with reason container_gone (no such container).
-	// Used for optional auto-recreate (e.g. run docker compose up -d <parentName>) so the operator does not have to run compose by hand (FR-008).
+	// OnParentContainerGone, if non-nil, is called when a parent is added to Unrestartable with reason container_gone or marked_for_removal.
+	// Used for optional auto-recreate (e.g. run docker compose up -d <serviceName>) so the operator does not have to run compose by hand (FR-008).
 	OnParentContainerGone func(parentName string)
 
 	mu                   sync.Mutex
@@ -52,7 +52,8 @@ func (f *Flow) RestartParent(ctx context.Context, containerID string) error {
 // WaitUntilHealthy polls the container's health status until "healthy" or timeout.
 // If timeout is reached, returns false (caller must not restart dependents).
 // If Inspect returns an unrestartable error, the container ID is added to the unrestartable set and false is returned.
-func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout time.Duration) bool {
+// parentName is the service name (e.g. for logging and OnParentContainerGone); only used when the container is the parent.
+func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID, parentName string, timeout time.Duration) bool {
 	if timeout <= 0 {
 		timeout = defaultWaitHealthyTimeout
 	}
@@ -65,6 +66,9 @@ func (f *Flow) WaitUntilHealthy(ctx context.Context, containerID string, timeout
 			if f.Unrestartable != nil && IsUnrestartableError(err) {
 				f.Unrestartable.Add(containerID, nil)
 				reasonStr := unrestartableReason(err)
+				if (reasonStr == "container_gone" || reasonStr == "marked_for_removal") && parentName != "" && f.OnParentContainerGone != nil {
+					f.OnParentContainerGone(parentName)
+				}
 				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect failed, container unrestartable (will not retry this ID)"), "container", containerID, "id_short", util.ShortID(containerID), "reason", reasonStr, "error", err)
 			} else {
 				docker.LogErrorRecovery(fmt.Sprintf("recovery: inspect after restart failed (container %s)", containerID), "container", containerID, "error", err)
@@ -138,11 +142,16 @@ func (f *Flow) RestartDependents(ctx context.Context, parentName string, discove
 		}
 	}
 	for _, name := range ordered {
-		depID := name
+		var depID string
 		if nameToID != nil {
-			if id, ok := nameToID[name]; ok {
-				depID = id
+			id, ok := nameToID[name]
+			if !ok {
+				docker.LogWarnRecovery(fmt.Sprintf("recovery: no ID mapping for dependent %q (parent %s), skipping", name, parentName), "dependent", name, "parent", parentName)
+				continue
 			}
+			depID = id
+		} else {
+			depID = name
 		}
 		if nameToID != nil && f.Unrestartable != nil && f.Unrestartable.Contains(depID) {
 			docker.LogInfoRecovery(fmt.Sprintf("recovery: skipping dependent %q (parent %s), container unrestartable", name, parentName), "dependent", name, "parent", parentName, "id_short", util.ShortID(depID))
@@ -193,8 +202,8 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName, reason
 			f.Unrestartable.Add(parentID, nil)
 			reasonStr := unrestartableReason(err)
 			docker.LogErrorRecovery(fmt.Sprintf("recovery: failed to restart parent %q (%s), will not retry this container ID", parentName, reasonStr), "parent", parentName, "id_short", util.ShortID(parentID), "reason", reasonStr, "error", err)
-			// Invoke callback only for parent container_gone (not for dependents, not for marked_for_removal or dependency_missing).
-			if reasonStr == "container_gone" && f.OnParentContainerGone != nil {
+			// Invoke callback only for parent container_gone or marked_for_removal (not for dependents or dependency_missing).
+			if (reasonStr == "container_gone" || reasonStr == "marked_for_removal") && f.OnParentContainerGone != nil {
 				f.OnParentContainerGone(parentName)
 			}
 			return
@@ -203,7 +212,7 @@ func (f *Flow) RunFullSequence(ctx context.Context, parentID, parentName, reason
 		return
 	}
 	docker.LogInfoRecovery(fmt.Sprintf("recovery: restarted parent %q, waiting for healthy", parentName), "parent", parentName)
-	if !f.WaitUntilHealthy(ctx, parentID, defaultWaitHealthyTimeout) {
+	if !f.WaitUntilHealthy(ctx, parentID, parentName, defaultWaitHealthyTimeout) {
 		docker.LogWarnRecovery(fmt.Sprintf("recovery: parent %q did not become healthy in time; not restarting dependents", parentName), "parent", parentName)
 		return
 	}

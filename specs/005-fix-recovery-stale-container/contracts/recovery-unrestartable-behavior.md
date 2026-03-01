@@ -60,11 +60,11 @@ When an external updater (e.g. watchtower, wud, ouroboros) replaces only the **p
 
 ---
 
-## Optional auto-recreate when parent is container_gone (FR-008)
+## Optional auto-recreate when parent is container_gone or marked_for_removal (FR-008)
 
-When a **parent** is marked unrestartable with reason **container_gone** (no such container), the monitor may optionally trigger recreation of that service so the operator does not have to run compose by hand.
+When a **parent** is marked unrestartable with reason **container_gone** (no such container) or **marked_for_removal**, the monitor may optionally trigger recreation of that service so the operator does not have to run compose by hand.
 
-- **Enable**: Set `WATCHDOG_AUTO_RECREATE` to `true`, `1`, or `yes` (case-insensitive). When enabled and a compose path is available (`WATCHDOG_COMPOSE_PATH` or `COMPOSE_FILE`), the monitor sets an internal callback that runs when a parent is added to the unrestartable set with reason **container_gone**.
-- **Action**: The callback runs `docker compose -f <composePath> up -d <parentName>` with the working directory set to the compose file’s directory (or current directory when appropriate). The monitor does not wait for the command to finish; it continues and will re-discover on the next cycle.
-- **Scope**: The callback is invoked **only** when the failed container is the **parent** and the reason is **container_gone**. It is **not** invoked for dependents, or for reasons such as `marked_for_removal` or `dependency_missing`.
-- **Observability**: When auto-recreate is triggered, the monitor logs at INFO the parent name, compose path, and that it will re-discover on the next cycle. If the `docker compose up` command fails, an error is logged.
+- **Enable**: Set `WATCHDOG_AUTO_RECREATE` to `true`, `1`, or `yes` (case-insensitive). When enabled and a compose path is available (`WATCHDOG_COMPOSE_PATH` or `COMPOSE_FILE`), the monitor sets an internal callback that runs when a parent is added to the unrestartable set with reason **container_gone** or **marked_for_removal**.
+- **Action**: The callback runs `docker compose -f <composePath> up -d <service_name>` with the working directory set to the compose file’s directory (or current directory when appropriate). The monitor resolves the parent's **container name** (e.g. `vpn`) to the compose **service name** (e.g. `gluetun`) using the compose file's `container_name` when set, so the correct service is recreated. The monitor does not wait for the command to finish; it continues and will re-discover on the next cycle.
+- **Scope**: The callback is invoked **only** when the failed container is the **parent** and the reason is **container_gone** or **marked_for_removal**. It is **not** invoked for dependents or for **dependency_missing**.
+- **Observability**: When auto-recreate is triggered, the monitor logs at INFO the parent name, service name (if resolved), compose path, and that it will re-discover on the next cycle. If the `docker compose up` command fails, an error is logged.
