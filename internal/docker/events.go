@@ -9,7 +9,11 @@ import (
 	"github.com/docker/docker/api/types/filters"
 )
 
-// HealthEvent is emitted when a container's health status changes.
+// HealthEvent represents a container lifecycle notification for recovery.
+// SubscribeHealthStatus emits not only health_status actions (e.g. unhealthy) but also
+// lifecycle actions (die, stop, destroy). Events are delivered on the returned channel
+// while the context is active; the channel is closed when the subscription ends.
+// See SubscribeHealthStatus for the full event scope so downstream users are not misled.
 type HealthEvent struct {
 	// ContainerID is the container ID.
 	ContainerID string

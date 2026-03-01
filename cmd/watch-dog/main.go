@@ -17,6 +17,7 @@ import (
 	"time"
 
 	composecli "github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	cliflags "github.com/docker/cli/cli/flags"
 	"github.com/docker/compose/v2/pkg/api"
@@ -323,6 +324,11 @@ func main() {
 						project, err := projOpts.LoadProject(runCtx)
 						if err != nil {
 							docker.LogError("auto-recreate: failed to load compose project", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
+							return
+						}
+						project, err = project.WithSelectedServices([]string{serviceName}, types.IncludeDependencies)
+						if err != nil {
+							docker.LogError("auto-recreate: failed to filter project to service", "parent", parentName, "service", serviceName, "compose_path", composePath, "error", err)
 							return
 						}
 						err = composeSvc.Up(runCtx, project, api.UpOptions{
